@@ -126,6 +126,80 @@ WHERE job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
         CONVERT(varchar(8), DATEADD(day,-90,GETDATE()), 112))
 """
 
+Q["overview_hero"] = """
+WITH last_run AS (
+    SELECT TOP 1
+        run_status, run_date, run_time, run_duration, message
+    FROM  msdb.dbo.sysjobhistory
+    WHERE job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
+      AND step_id = 0
+    ORDER BY run_date DESC, run_time DESC
+),
+agg_90d AS (
+    SELECT
+        CAST(ROUND(100.0 * SUM(CASE WHEN run_status=1 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS DECIMAL(5,1)) AS success_rate,
+        AVG(CAST((run_duration/10000)*3600+((run_duration%10000)/100)*60+(run_duration%100) AS FLOAT)) AS avg_dur,
+        COUNT(*) AS total_runs
+    FROM  msdb.dbo.sysjobhistory
+    WHERE job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
+      AND step_id = 0
+      AND run_date >= CONVERT(int, CONVERT(varchar(8), DATEADD(day,-90,GETDATE()), 112))
+),
+fails_30d AS (
+    SELECT COUNT(*) AS cnt
+    FROM  msdb.dbo.sysjobhistory
+    WHERE job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
+      AND step_id = 0
+      AND run_status IN (0, 2, 3)
+      AND run_date >= CONVERT(int, CONVERT(varchar(8), DATEADD(day,-30,GETDATE()), 112))
+),
+locks_now AS (
+    SELECT COUNT(*) AS cnt
+    FROM sys.dm_exec_requests r
+    WHERE r.session_id > 50 AND r.session_id <> @@SPID
+),
+job_act AS (
+    SELECT TOP 1
+        j.enabled,
+        ja.start_execution_date, ja.stop_execution_date,
+        ja.last_executed_step_id,
+        js.step_name AS current_step
+    FROM  msdb.dbo.sysjobs j
+    LEFT JOIN msdb.dbo.sysjobactivity ja
+           ON j.job_id = ja.job_id
+          AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions
+                               WHERE agent_start_date IS NOT NULL)
+    LEFT JOIN msdb.dbo.sysjobsteps js
+           ON j.job_id = js.job_id AND js.step_id = ja.last_executed_step_id
+    WHERE j.name = '${job_name}'
+)
+SELECT
+    CASE
+        WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL THEN 3
+        WHEN lr.run_status = 1 THEN 1
+        WHEN lr.run_status = 0 THEN 0
+        ELSE 2
+    END AS status_code,
+    ISNULL(ja.enabled, 0)                                                  AS enabled,
+    ISNULL((ja.start_execution_date), CAST(0 AS DATETIME))                 AS last_start,
+    ISNULL(DATEDIFF(SECOND, ja.start_execution_date, GETDATE()), 0)        AS running_elapsed_s,
+    CAST(ISNULL(
+        (lr.run_duration/10000)*3600+((lr.run_duration%10000)/100)*60+(lr.run_duration%100), 0
+    ) AS INT)                                                              AS last_duration_s,
+    CAST(ISNULL(ag.avg_dur, 0) AS INT)                                     AS avg_duration_s,
+    ISNULL(ag.success_rate, 0)                                             AS success_rate,
+    ISNULL(ag.total_runs, 0)                                               AS total_runs_90d,
+    ISNULL(fl.cnt, 0)                                                      AS fails_30d,
+    ISNULL(lk.cnt, 0)                                                      AS locks_now,
+    ISNULL(ja.current_step, '')                                            AS current_step,
+    ISNULL(LEFT(lr.message, 240), '')                                      AS last_message
+FROM job_act ja
+CROSS JOIN last_run  lr
+CROSS JOIN agg_90d   ag
+CROSS JOIN fails_30d fl
+CROSS JOIN locks_now lk
+"""
+
 Q["job_history"] = f"""
 SELECT
     exec_dt AS time,
@@ -858,6 +932,177 @@ try {
 }
 """
 
+# ─── HTML Graphics: hero da visao geral ───────────────────────────────────────
+
+HERO_HTML = """
+<div id="hero-root" style="width:100%;height:100%;
+  background:linear-gradient(135deg,#0d1117 0%,#161b22 100%);
+  color:#e6edf3;font-family:'Segoe UI',sans-serif;
+  padding:14px 18px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;
+  border-radius:8px;overflow:auto"></div>
+"""
+
+HERO_CSS = """
+#hero-root *,
+#hero-root *::before,
+#hero-root *::after { box-sizing:border-box; }
+
+@keyframes hero-pulse {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:.6; transform:scale(1.05); }
+}
+
+.h-row { display:flex; gap:14px; align-items:stretch; }
+.h-row.top { flex-wrap:nowrap; }
+.h-row.bot { flex-wrap:wrap; }
+
+.h-sem-wrap { display:flex; flex-direction:column; align-items:center;
+  justify-content:center; min-width:140px; padding:10px; }
+.h-sem { width:90px; height:90px; border-radius:50%; }
+.h-sem.green  { background:#00e676; box-shadow:0 0 28px #00e67699; }
+.h-sem.red    { background:#ff1744; box-shadow:0 0 28px #ff174499; }
+.h-sem.yellow { background:#ffea00; box-shadow:0 0 28px #ffea0099; }
+.h-sem.blue   { background:#2979ff; box-shadow:0 0 28px #2979ff99;
+                animation:hero-pulse 1.4s ease-in-out infinite; }
+.h-sem.gray   { background:#546e7a; box-shadow:0 0 14px #546e7a77; }
+.h-sem-label { margin-top:10px; font-size:1.05rem; font-weight:700;
+  letter-spacing:.04em; }
+.h-sem-sub   { color:#8b949e; font-size:.78rem; margin-top:2px; }
+
+.h-info { flex:1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+
+.h-title { display:flex; align-items:center; gap:10px; }
+.h-title .name { font-size:1.05rem; font-weight:700; color:#e6edf3; }
+.h-badge { display:inline-block; padding:3px 10px; border-radius:14px;
+  font-size:.7rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+.h-badge.on  { background:#00e67622; color:#00e676; border:1px solid #00e67666; }
+.h-badge.off { background:#ff174422; color:#ff1744; border:1px solid #ff174466; }
+.h-badge.live{ background:#2979ff22; color:#58a6ff; border:1px solid #2979ff66;
+  animation:hero-pulse 1.4s ease-in-out infinite; }
+
+.h-msg { color:#8b949e; font-size:.82rem; line-height:1.35;
+  background:#0d1117aa; border-left:3px solid #30363d;
+  padding:6px 10px; border-radius:0 4px 4px 0;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; text-overflow:ellipsis; }
+
+.h-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px; }
+.h-metric { background:#0d1117; border:1px solid #30363d; border-radius:8px;
+  padding:8px 10px; }
+.h-metric .lbl { color:#8b949e; font-size:.66rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:.06em; }
+.h-metric .val { color:#e6edf3; font-size:1.25rem; font-weight:700;
+  line-height:1.1; margin-top:3px; }
+.h-metric .val.green  { color:#00e676; }
+.h-metric .val.yellow { color:#ffea00; }
+.h-metric .val.red    { color:#ff1744; }
+.h-metric .val.blue   { color:#58a6ff; }
+.h-metric .sub { color:#8b949e; font-size:.7rem; margin-top:2px; }
+
+.h-progress { height:6px; background:#21262d; border-radius:3px; margin-top:6px;
+  overflow:hidden; }
+.h-progress > div { height:100%; border-radius:3px; transition:width .4s; }
+.h-progress > div.green  { background:#00e676; }
+.h-progress > div.yellow { background:#ffea00; }
+.h-progress > div.red    { background:#ff1744; }
+"""
+
+HERO_JS = r"""
+// onInit do hero
+try{
+  var root = htmlNode.querySelector('#hero-root');
+  if(!root){ return; }
+  var s = (data && data.series && data.series[0]) || null;
+  if(!s || !s.fields || !s.fields.length){
+    root.innerHTML = '<div style="color:#8b949e;padding:20px">Sem dados.</div>'; return;
+  }
+  var F = {};
+  s.fields.forEach(function(f){F[f.name]=(f.values&&f.values.toArray)?f.values.toArray():(f.values||[]);});
+  function v(k,i){ return F[k] ? F[k][i==null?0:i] : null; }
+
+  var statCode = +v('status_code') || 0;
+  var enabled  = +v('enabled')     || 0;
+  var lastDur  = +v('last_duration_s') || 0;
+  var avgDur   = +v('avg_duration_s')  || 0;
+  var sr       = +v('success_rate')    || 0;
+  var totalRuns= +v('total_runs_90d')  || 0;
+  var fails30  = +v('fails_30d')       || 0;
+  var locksNow = +v('locks_now')       || 0;
+  var curStep  = v('current_step') || '';
+  var lastMsg  = v('last_message') || '';
+  var elapsed  = +v('running_elapsed_s') || 0;
+
+  function escH(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function fmtS(x){x=+x||0;var h=Math.floor(x/3600),m=Math.floor((x%3600)/60),ss=x%60;return (h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;}
+
+  var semColor = statCode===3?'blue':statCode===1?'green':statCode===0?'red':'gray';
+  var semText  = statCode===3?'Em Execucao':statCode===1?'Sucesso':statCode===0?'Falhou':'Ocioso';
+  var semSub   = statCode===3?('rodando ha '+fmtS(elapsed)):'ultima execucao';
+
+  var ratio  = avgDur>0 ? lastDur/avgDur : 0;
+  var ratioPct = avgDur>0 ? Math.round((ratio-1)*100) : null;
+  var durCls = ratio>1.5?'red':(ratioPct!==null&&ratioPct>10)?'yellow':'green';
+  var durLbl = ratioPct===null ? '' : (ratioPct>0?'+'+ratioPct+'%':ratioPct+'%')+' vs media';
+  var durBarPct = avgDur>0 ? Math.min(100, Math.round((lastDur/Math.max(avgDur,lastDur))*100)) : 0;
+
+  var srCls    = sr>=95?'green':sr>=80?'yellow':'red';
+  var failsCls = fails30===0?'green':fails30<=2?'yellow':'red';
+  var locksCls = locksNow===0?'green':locksNow<=10?'yellow':'red';
+
+  var enabledBadge = enabled
+    ? '<span class="h-badge on">Habilitado</span>'
+    : '<span class="h-badge off">Desabilitado</span>';
+  var liveBadge = statCode===3 ? '<span class="h-badge live">AO VIVO</span>' : '';
+
+  var html = ''
+    + '<div class="h-row top">'
+      + '<div class="h-sem-wrap">'
+        + '<div class="h-sem '+semColor+'"></div>'
+        + '<div class="h-sem-label">'+semText+'</div>'
+        + '<div class="h-sem-sub">'+semSub+'</div>'
+      + '</div>'
+      + '<div class="h-info">'
+        + '<div class="h-title">'
+          + '<span class="name">Motor de Abastecimento</span>'
+          + enabledBadge + liveBadge
+          + (curStep && statCode===3 ? '<span class="h-badge live">step: '+escH(curStep)+'</span>' : '')
+        + '</div>'
+        + (lastMsg ? '<div class="h-msg" title="'+escH(lastMsg)+'">'+escH(lastMsg)+'</div>' : '')
+        + '<div class="h-metrics">'
+          + '<div class="h-metric">'
+            + '<div class="lbl">Duracao Ultima</div>'
+            + '<div class="val '+durCls+'">'+fmtS(lastDur)+'</div>'
+            + '<div class="sub">media 90d: '+fmtS(avgDur)+(durLbl?' &middot; '+durLbl:'')+'</div>'
+            + '<div class="h-progress"><div class="'+durCls+'" style="width:'+durBarPct+'%"></div></div>'
+          + '</div>'
+          + '<div class="h-metric">'
+            + '<div class="lbl">Sucesso 90d</div>'
+            + '<div class="val '+srCls+'">'+sr.toFixed(1)+'%</div>'
+            + '<div class="sub">'+totalRuns+' execucoes</div>'
+            + '<div class="h-progress"><div class="'+srCls+'" style="width:'+Math.min(100,sr)+'%"></div></div>'
+          + '</div>'
+          + '<div class="h-metric">'
+            + '<div class="lbl">Falhas 30d</div>'
+            + '<div class="val '+failsCls+'">'+fails30+'</div>'
+            + '<div class="sub">inclui retry e cancelado</div>'
+          + '</div>'
+          + '<div class="h-metric">'
+            + '<div class="lbl">Locks ativos</div>'
+            + '<div class="val '+locksCls+'">'+locksNow+'</div>'
+            + '<div class="sub">sessoes em espera</div>'
+          + '</div>'
+        + '</div>'
+      + '</div>'
+    + '</div>';
+
+  root.innerHTML = html;
+}catch(e){
+  try{ htmlNode.querySelector('#hero-root').innerHTML =
+    '<div style="color:#ff1744;padding:20px">Erro: '+(e&&e.message?e.message:e)+'</div>'; }catch(_){}
+}
+"""
+
 JOBS_OV = [
     _color_ov("Status", {
         "Sucesso": {"color": "green", "index": 0},
@@ -909,18 +1154,12 @@ def build_dashboard(ds_uid: str) -> dict:
     panels = []
     y = 0
 
-    # Row 1 — Visao geral
+    # Row 1 — Visao geral (hero card via HTML Graphics)
     panels += [_row("Visao Geral do Job", y)]; y += 1
-    panels += [
-        stat(ds_uid, "Status do Job",        Q["job_status"],    x=0,  y=y, w=5, h=4,
-             mappings=STATUS_MAPS),
-        stat(ds_uid, "Step em Execucao",     Q["current_step"],  x=5,  y=y, w=11, h=4,
-             thresholds={"mode": "absolute", "steps": [{"color": "blue", "value": None}]}),
-        stat(ds_uid, "Duracao - Ultima Run", Q["last_duration"], x=16, y=y, w=4, h=4,
-             unit="s", thresholds=DUR_THRESHOLDS),
-        stat(ds_uid, "Taxa de Sucesso 90d",  Q["success_rate"],  x=20, y=y, w=4, h=4,
-             unit="percent", thresholds=PCT_THRESHOLDS),
-    ]; y += 4
+    panels += [htmlgraphics(ds_uid, "Motor de Abastecimento - Visao Geral",
+                            Q["overview_hero"],
+                            html=HERO_HTML, css=HERO_CSS, js=HERO_JS,
+                            x=0, y=y, w=24, h=8)]; y += 8
 
     # Row 2 — Historico do job
     panels += [_row("Historico de Execucoes", y)]; y += 1

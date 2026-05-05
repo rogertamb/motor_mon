@@ -5,6 +5,21 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [1.4.0] – 2026-05-05
+
+### Adicionado
+- **Hero card da Visão Geral no Grafana** — substitui os 4 stat panels antigos por um único painel HTML Graphics no topo do dashboard com:
+  - **Semáforo grande** com efeito glow (verde/amarelo/vermelho/azul pulsante para "Em Execução")
+  - Badge **Habilitado/Desabilitado** + badge **AO VIVO** + badge do **step atual** quando em execução
+  - **Última mensagem** do job em destaque (preview de até 240 chars)
+  - 4 métricas em cards: Duração Última (com `% vs média` e barra), Sucesso 90d (com barra), Falhas 30d, Locks ativos — cores semânticas por threshold
+- Nova query `Q["overview_hero"]` consolida status + duração + média + sucesso + falhas 30d + locks num único SELECT
+
+### Alterado
+- Plugin HTML Graphics agora usa `onInit` (não `codeData`) — `codeData` permanece como JSON estático
+
+---
+
 ## [1.3.0] – 2026-05-05
 
 ### Adicionado
