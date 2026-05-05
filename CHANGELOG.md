@@ -5,6 +5,19 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [1.3.0] – 2026-05-05
+
+### Adicionado
+- **Painel HTML Graphics no Grafana** (`gapit-htmlgraphics-panel`) — replica fielmente os cards do Flask: stripe colorido, badge `% vs média`, barra de comparação com pino azul (média), `Sucesso%`, badge da database e ícone ⚠ de anomalia
+- Função `htmlgraphics()` em `grafana_provision.py` — wrapper para painéis customizados via plugin HTML Graphics
+- Constantes `STEPS_HTML`, `STEPS_CSS`, `STEPS_JS` com a renderização dos cards
+- A tabela detalhada com gauges foi mantida como fallback abaixo dos cards
+
+### Pré-requisito
+- Instalar o plugin no servidor Grafana: `grafana-cli plugins install gapit-htmlgraphics-panel` (ou via UI: Administration → Plugins → "HTML Graphics")
+
+---
+
 ## [1.2.0] – 2026-05-05
 
 ### Adicionado

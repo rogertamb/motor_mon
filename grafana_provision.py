@@ -453,6 +453,37 @@ def table(uid, title, sql, x, y, w=24, h=10, overrides=None):
         "fieldConfig": {"defaults": {}, "overrides": overrides or []},
     }
 
+def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
+    """Painel via plugin gapit-htmlgraphics-panel (HTML Graphics).
+    Requer o plugin instalado: grafana-cli plugins install gapit-htmlgraphics-panel
+    """
+    return {
+        "id": _next(), "type": "gapit-htmlgraphics-panel", "title": title,
+        "gridPos": {"h": h, "w": w, "x": x, "y": y},
+        "datasource": _ds(uid),
+        "targets": [_tgt(uid, sql, "table")],
+        "options": {
+            "html": html,
+            "css":  css,
+            "codeData": "{}",
+            "renderOnMount":   True,
+            "centerAlignContent": False,
+            "useGrandResult":  False,
+            "calcsMode":       "html",
+            "add100Percentage": False,
+            "dynamicHtmlGraphics": True,
+            "dynamicData":     True,
+            "dynamicProps":    False,
+            "dynamicFontSize": False,
+            "SVGBaseFix":      True,
+            "onInitOnResize":  False,
+            "rootCSS":         "",
+            "polygons":        [],
+            "codeOptions":     js,
+        },
+        "fieldConfig": {"defaults": {}, "overrides": []},
+    }
+
 def timeseries(uid, title, sql, x, y, w=24, h=8, unit="s"):
     return {
         "id": _next(), "type": "timeseries", "title": title,
@@ -578,6 +609,173 @@ STEPS_OV = [
     },
 ]
 
+# ─── HTML Graphics: cards de steps no estilo Flask ────────────────────────────
+
+STEPS_HTML = """
+<div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;
+  background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif">
+  <div id="grid" style="display:grid;
+       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
+</div>
+"""
+
+STEPS_CSS = """
+#root { box-sizing:border-box; }
+#root *,
+#root *::before,
+#root *::after { box-sizing:border-box; }
+.sc-card { background:#161b22; border:1px solid #30363d; border-radius:8px;
+  position:relative; overflow:hidden; padding:10px 10px 8px; }
+.sc-accent { position:absolute; top:0; left:0; right:0; height:3px; }
+.sc-accent.green  { background:#00e676; }
+.sc-accent.yellow { background:#ffea00; }
+.sc-accent.red    { background:#ff1744; }
+.sc-accent.blue   { background:#2979ff; }
+.sc-accent.gray   { background:#546e7a; }
+.sc-card.green  { border-color:#00e676; }
+.sc-card.yellow { border-color:#ffea00; }
+.sc-card.red    { border-color:#ff1744; }
+.sc-card.blue   { border-color:#2979ff; }
+.sc-card.gray   { border-color:#546e7a; }
+
+.sc-head { display:flex; justify-content:space-between; align-items:flex-start; gap:6px; }
+.sc-id   { color:#8b949e; font-size:.72rem; font-weight:700; }
+.sc-name { font-size:.82rem; font-weight:600; line-height:1.25;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
+.sc-status { display:inline-block; padding:2px 8px; border-radius:4px;
+  font-size:.7rem; font-weight:600; margin-top:4px; }
+.sc-status.ok   { background:#00e67622; color:#00e676; }
+.sc-status.bad  { background:#ff174422; color:#ff1744; }
+.sc-status.warn { background:#ffea0022; color:#ffea00; }
+.sc-status.idle { background:#546e7a22; color:#8b949e; }
+
+.sc-ratio { font-size:1.05rem; font-weight:700; line-height:1; text-align:right; }
+.sc-ratio.ok    { color:#00e676; }
+.sc-ratio.warn  { color:#ffea00; }
+.sc-ratio.over  { color:#ff1744; }
+.sc-ratio.none  { color:#8b949e; }
+.sc-ratiolbl { color:#8b949e; font-size:.62rem; }
+
+.sc-times { display:flex; justify-content:space-between; color:#8b949e;
+  font-size:.72rem; margin-top:8px; }
+.sc-times strong { color:#e6edf3; }
+
+.sc-bar    { height:8px; background:#21262d; border-radius:4px; margin-top:4px;
+  position:relative; }
+.sc-fill   { height:100%; border-radius:4px; transition:width .4s; }
+.sc-fill.ok   { background:#00e676; }
+.sc-fill.warn { background:#ffea00; }
+.sc-fill.over { background:#ff1744; }
+.sc-mark   { position:absolute; top:-2px; bottom:-2px; width:2px;
+  background:#58a6ff; border-radius:1px; }
+
+.sc-foot { display:flex; justify-content:space-between; align-items:center;
+  margin-top:8px; }
+.sc-success { font-size:.72rem; }
+.sc-success.ok   { color:#00e676; }
+.sc-success.warn { color:#ffea00; }
+.sc-success.bad  { color:#ff1744; }
+.sc-runs  { color:#8b949e; font-size:.68rem; }
+.sc-db    { background:#1f6feb22; border:1px solid #1f6feb66;
+  color:#58a6ff; font-size:.68rem; padding:2px 6px; border-radius:4px; }
+.sc-anom  { display:inline-block; margin-left:4px; color:#ff1744;
+  font-size:.7rem; }
+.sc-empty { color:#8b949e; padding:12px; }
+"""
+
+STEPS_JS = r"""
+// Recebe `data` (Grafana injeta) e popula #grid com cards no estilo Flask.
+try {
+  const grid = htmlNode.querySelector('#grid');
+  grid.innerHTML = '';
+  const series = (data && data.series && data.series[0]) || null;
+  if (!series || !series.fields || !series.fields.length) {
+    grid.innerHTML = '<div class="sc-empty">Sem dados.</div>'; return;
+  }
+  const F = {};
+  series.fields.forEach(f => F[f.name] = f.values.toArray ? f.values.toArray() : f.values);
+  const n = (F['#'] || []).length;
+  const escH = s => String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+  const fmtSecs = s => {
+    s = +s || 0;
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+    return (h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;
+  };
+
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    const last  = +F['Ult. Dur.'][i]  || 0;
+    const avg   = +F['Media 90d'][i]  || 0;
+    const ratio = avg > 0 ? last / avg : 0;
+    const pctDiff = avg > 0 ? Math.round((ratio - 1) * 100) : null;
+
+    const stat = F['Status'][i] || '-';
+    const semColor =
+      stat === 'Falhou'    ? 'red'    :
+      stat === 'Cancelado' ? 'gray'   :
+      stat === 'Retry'     ? 'yellow' :
+      stat === 'Sucesso'   ? 'green'  : 'gray';
+
+    const ratioCls = !avg ? 'none'
+      : ratio > 1.5  ? 'over'
+      : pctDiff > 10 ? 'warn' : 'ok';
+    const ratioLbl = pctDiff === null ? '—'
+      : pctDiff > 0 ? '+'+pctDiff+'%'
+      : pctDiff < 0 ? pctDiff+'%' : '=avg';
+
+    const trackMax = Math.max(last, avg * 1.6, 1);
+    const fillW   = Math.min(100, last / trackMax * 100);
+    const avgMark = avg > 0 ? Math.min(100, avg / trackMax * 100) : null;
+    const fillCls = ratio > 1.5 ? 'over' : pctDiff > 10 ? 'warn' : 'ok';
+
+    const sr = +F['Sucesso%'][i] || 0;
+    const srCls = sr >= 95 ? 'ok' : sr >= 80 ? 'warn' : 'bad';
+
+    const statCls = stat === 'Sucesso' ? 'ok'
+      : stat === 'Falhou' ? 'bad'
+      : stat === 'Retry'  ? 'warn' : 'idle';
+
+    const anom = F['Anomalia'][i];
+    const anomTag = (anom === 'Critica' || anom === 'Lenta')
+      ? '<span class="sc-anom" title="'+escH(anom)+'">⚠</span>' : '';
+
+    html += `
+    <div class="sc-card ${semColor}">
+      <div class="sc-accent ${semColor}"></div>
+      <div class="sc-head">
+        <div style="min-width:0">
+          <div class="sc-id">#${escH(F['#'][i])}${anomTag}</div>
+          <div class="sc-name" title="${escH(F['Step'][i])}">${escH(F['Step'][i])}</div>
+          <span class="sc-status ${statCls}">${escH(stat)}</span>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div class="sc-ratio ${ratioCls}">${ratioLbl}</div>
+          <div class="sc-ratiolbl">vs média</div>
+        </div>
+      </div>
+      <div class="sc-times">
+        <span>⏱ <strong>${fmtSecs(last)}</strong></span>
+        <span>avg ${fmtSecs(avg)}</span>
+      </div>
+      <div class="sc-bar">
+        <div class="sc-fill ${fillCls}" style="width:${fillW}%"></div>
+        ${avgMark !== null ? '<div class="sc-mark" style="left:'+avgMark+'%"></div>' : ''}
+      </div>
+      <div class="sc-foot">
+        <span class="sc-success ${srCls}">${sr.toFixed(1)}% ok · <span class="sc-runs">${escH(F['Runs 90d'][i])}x</span></span>
+        <span class="sc-db">${escH(F['Database'][i])}</span>
+      </div>
+    </div>`;
+  }
+  grid.innerHTML = html;
+} catch (e) {
+  htmlNode.querySelector('#grid').innerHTML =
+    '<div class="sc-empty">Erro: '+(e && e.message)+'</div>';
+}
+"""
+
 JOBS_OV = [
     _color_ov("Status", {
         "Sucesso": {"color": "green", "index": 0},
@@ -647,13 +845,20 @@ def build_dashboard(ds_uid: str) -> dict:
     panels += [timeseries(ds_uid, "Duracao do Job ao Longo do Tempo",
                           Q["job_history"], x=0, y=y, w=24, h=8)]; y += 8
 
-    # Row 3 — Tabela de steps (cards visuais com gauges)
-    panels += [_row("Steps - Ultima Execucao vs Media + Anomalias (>10% lento)", y)]; y += 1
+    # Row 3a — Steps em Cards (HTML Graphics, estilo Flask)
+    panels += [_row("Steps - Cards visuais (estilo Flask)", y)]; y += 1
+    panels += [htmlgraphics(ds_uid, "Steps - Ultima Execucao vs Media (cards)",
+                            Q["steps_overview"],
+                            html=STEPS_HTML, css=STEPS_CSS, js=STEPS_JS,
+                            x=0, y=y, w=24, h=14)]; y += 14
+
+    # Row 3b — Tabela detalhada (gauges) — opcional, mantida como fallback
+    panels += [_row("Steps - Tabela detalhada (gauges)", y)]; y += 1
     p = table(ds_uid, "Steps - Cards com Duracao, % vs Media e Sucesso",
-              Q["steps_overview"], x=0, y=y, w=24, h=14,
+              Q["steps_overview"], x=0, y=y, w=24, h=12,
               overrides=STEPS_OV)
     p["options"]["cellHeight"] = "md"
-    panels += [p]; y += 14
+    panels += [p]; y += 12
 
     # Row 4 — Duracao por step (time series)
     panels += [_row("Historico de Duracao por Step", y)]; y += 1
