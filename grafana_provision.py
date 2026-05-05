@@ -517,14 +517,16 @@ def _hide_ov(col):
         "properties": [{"id": "custom.hidden", "value": True}],
     }
 
-def _gauge_ov(col, unit, thresholds, mode="gradient-gauge"):
+def _gauge_ov(col, unit, thresholds, mode="gradient"):
+    """mode: 'basic' (solid bar como Flask), 'gradient' (gradient), 'lcd'."""
+    legacy_mode = {"basic": "basic", "gradient": "gradient-gauge", "lcd": "lcd-gauge"}[mode]
     return {
         "matcher": {"id": "byName", "options": col},
         "properties": [
             {"id": "unit",               "value": unit},
             {"id": "thresholds",         "value": thresholds},
-            {"id": "custom.displayMode", "value": mode},
-            {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}},
+            {"id": "custom.displayMode", "value": legacy_mode},
+            {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": mode}},
             {"id": "custom.align",       "value": "center"},
         ],
     }
@@ -562,8 +564,8 @@ STEPS_OV = [
         "Rapida":   {"color": "blue",      "index": 3},
         "Sem base": {"color": "dark-gray", "index": 4},
     }),
-    _gauge_ov("Ult. Dur.",  "s",       DUR_STEP_THRESHOLDS),
-    _gauge_ov("Media 90d",  "s",       DUR_STEP_THRESHOLDS),
+    _gauge_ov("Ult. Dur.",  "s",       DUR_STEP_THRESHOLDS, mode="basic"),
+    _gauge_ov("Media 90d",  "s",       DUR_STEP_THRESHOLDS, mode="basic"),
     _gauge_ov("% vs Media", "percent", RATIO_THRESHOLDS),
     _gauge_ov("Sucesso%",   "percent", PCT_THRESHOLDS),
     {
