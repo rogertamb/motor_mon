@@ -453,12 +453,13 @@ def table(uid, title, sql, x, y, w=24, h=10, overrides=None):
         "fieldConfig": {"defaults": {}, "overrides": overrides or []},
     }
 
-def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
+def htmlgraphics(uid, title, sql, html, css, x, y, w=24, h=12):
     """Painel via plugin gapit-htmlgraphics-panel (HTML Graphics).
     Requer o plugin instalado: grafana-cli plugins install gapit-htmlgraphics-panel
 
-    'js' deve ser um corpo de funcao que retorna um objeto cujas chaves
-    sao substituidas em 'html' como ${chave}.
+    Esta versao do plugin trata codeData como JSON. A logica dinamica
+    deve ir DENTRO do HTML como expressoes ${...} (avaliadas como JS)
+    com dynamicHtmlGraphics=True.
     """
     return {
         "id": _next(), "type": "gapit-htmlgraphics-panel", "title": title,
@@ -468,7 +469,7 @@ def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
         "options": {
             "html":               html,
             "css":                css,
-            "codeData":           js,
+            "codeData":           "{}",   # JSON valido obrigatorio
             "renderOnMount":      True,
             "centerAlignContent": False,
             "useGrandResult":     False,
@@ -613,11 +614,72 @@ STEPS_OV = [
 
 # ─── HTML Graphics: cards de steps no estilo Flask ────────────────────────────
 
-STEPS_HTML = """
+STEPS_HTML = r"""
 <div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;
   background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;box-sizing:border-box">
   <div id="grid" style="display:grid;
-       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${cards}</div>
+       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${(function(){
+try{
+  var series=(data&&data.series&&data.series[0])||null;
+  if(!series||!series.fields||!series.fields.length) return '<div class="sc-empty">Sem dados.</div>';
+  var F={};
+  series.fields.forEach(function(f){F[f.name]=(f.values&&f.values.toArray)?f.values.toArray():(f.values||[]);});
+  var n=(F['#']||[]).length;
+  if(!n) return '<div class="sc-empty">Sem linhas.</div>';
+  var escH=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
+  var fmtSecs=function(s){s=+s||0;var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return (h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;};
+  var html='';
+  for(var i=0;i<n;i++){
+    var last=+F['Ult. Dur.'][i]||0;
+    var avg=+F['Media 90d'][i]||0;
+    var ratio=avg>0?last/avg:0;
+    var pctDiff=avg>0?Math.round((ratio-1)*100):null;
+    var stat=F['Status'][i]||'-';
+    var semColor=stat==='Falhou'?'red':stat==='Cancelado'?'gray':stat==='Retry'?'yellow':stat==='Sucesso'?'green':'gray';
+    var ratioCls=!avg?'none':ratio>1.5?'over':pctDiff>10?'warn':'ok';
+    var ratioLbl=pctDiff===null?'—':pctDiff>0?'+'+pctDiff+'%':pctDiff<0?pctDiff+'%':'=avg';
+    var trackMax=Math.max(last,avg*1.6,1);
+    var fillW=Math.min(100,last/trackMax*100);
+    var avgMark=avg>0?Math.min(100,avg/trackMax*100):null;
+    var fillCls=ratio>1.5?'over':pctDiff>10?'warn':'ok';
+    var sr=+F['Sucesso%'][i]||0;
+    var srCls=sr>=95?'ok':sr>=80?'warn':'bad';
+    var statCls=stat==='Sucesso'?'ok':stat==='Falhou'?'bad':stat==='Retry'?'warn':'idle';
+    var anom=F['Anomalia']?F['Anomalia'][i]:'';
+    var anomTag=(anom==='Critica'||anom==='Lenta')?(' <span class="sc-anom" title="'+escH(anom)+'">⚠</span>'):'';
+    var stepName=F['Step']?F['Step'][i]:'';
+    var dbName=F['Database']?F['Database'][i]:'';
+    var runs=F['Runs 90d']?F['Runs 90d'][i]:0;
+    html+='<div class="sc-card '+semColor+'">'
+      +'<div class="sc-accent '+semColor+'"></div>'
+      +'<div class="sc-head">'
+        +'<div style="min-width:0">'
+          +'<div class="sc-id">#'+escH(F['#'][i])+anomTag+'</div>'
+          +'<div class="sc-name" title="'+escH(stepName)+'">'+escH(stepName)+'</div>'
+          +'<span class="sc-status '+statCls+'">'+escH(stat)+'</span>'
+        +'</div>'
+        +'<div style="text-align:right;flex-shrink:0">'
+          +'<div class="sc-ratio '+ratioCls+'">'+ratioLbl+'</div>'
+          +'<div class="sc-ratiolbl">vs media</div>'
+        +'</div>'
+      +'</div>'
+      +'<div class="sc-times">'
+        +'<span>⏱ <strong>'+fmtSecs(last)+'</strong></span>'
+        +'<span>avg '+fmtSecs(avg)+'</span>'
+      +'</div>'
+      +'<div class="sc-bar">'
+        +'<div class="sc-fill '+fillCls+'" style="width:'+fillW+'%"></div>'
+        +(avgMark!==null?'<div class="sc-mark" style="left:'+avgMark+'%"></div>':'')
+      +'</div>'
+      +'<div class="sc-foot">'
+        +'<span class="sc-success '+srCls+'">'+sr.toFixed(1)+'% ok &middot; <span class="sc-runs">'+escH(runs)+'x</span></span>'
+        +'<span class="sc-db">'+escH(dbName)+'</span>'
+      +'</div>'
+    +'</div>';
+  }
+  return html;
+}catch(e){return '<div class="sc-empty">Erro: '+(e&&e.message?e.message:e)+'</div>';}
+})()}</div>
 </div>
 """
 
@@ -685,7 +747,7 @@ STEPS_CSS = """
 .sc-empty { color:#8b949e; padding:12px; }
 """
 
-STEPS_JS = r"""
+_UNUSED_OLD_STEPS_JS = r"""
 // gapit-htmlgraphics-panel (codeData):
 // - 'data' eh injetado pelo plugin (panelData do Grafana)
 // - precisamos RETORNAR um objeto cujas chaves viram ${chave} no HTML
@@ -861,7 +923,7 @@ def build_dashboard(ds_uid: str) -> dict:
     panels += [_row("Steps - Cards visuais (estilo Flask)", y)]; y += 1
     panels += [htmlgraphics(ds_uid, "Steps - Ultima Execucao vs Media (cards)",
                             Q["steps_overview"],
-                            html=STEPS_HTML, css=STEPS_CSS, js=STEPS_JS,
+                            html=STEPS_HTML, css=STEPS_CSS,
                             x=0, y=y, w=24, h=14)]; y += 14
 
     # Row 3b — Tabela detalhada (gauges) — opcional, mantida como fallback
