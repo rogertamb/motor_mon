@@ -455,8 +455,9 @@ def table(uid, title, sql, x, y, w=24, h=10, overrides=None):
 
 def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
     """Painel via plugin gapit-htmlgraphics-panel (v2+).
-    'js' deve ser o corpo de uma funcao JS que retorna um objeto cujas
-    chaves sao substituidas em 'html' como ${chave}.
+    - 'codeData' eh JSON (config estatica)
+    - 'onInit' eh o JavaScript executado apos render, com acesso a
+      'htmlNode' (DOM root) e 'data' (panelData)
     """
     return {
         "id": _next(), "type": "gapit-htmlgraphics-panel", "title": title,
@@ -466,18 +467,19 @@ def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
         "options": {
             "html":               html,
             "css":                css,
-            "codeData":           js,
+            "codeData":           "{}",
+            "onInit":             js,
             "renderOnMount":      True,
             "centerAlignContent": False,
             "useGrandResult":     False,
             "calcsMode":          "html",
             "add100Percentage":   False,
-            "dynamicHtmlGraphics": True,
+            "dynamicHtmlGraphics": False,
             "dynamicData":        True,
             "dynamicProps":       False,
             "dynamicFontSize":    False,
             "SVGBaseFix":         True,
-            "onInitOnResize":     False,
+            "onInitOnResize":     True,
             "rootCSS":            "",
             "polygons":           [],
         },
@@ -612,13 +614,17 @@ STEPS_OV = [
 # ─── HTML Graphics: cards de steps no estilo Flask ────────────────────────────
 
 STEPS_JS = r"""
+// Roda no onInit do gapit-htmlgraphics-panel.
+// Disponiveis: htmlNode (DOM), data (panelData), options, theme.
 try{
+  var grid = htmlNode.querySelector('#grid');
+  if(!grid){ return; }
   var series=(data&&data.series&&data.series[0])||null;
-  if(!series||!series.fields||!series.fields.length) return '<div class="sc-empty">Sem dados.</div>';
+  if(!series||!series.fields||!series.fields.length){grid.innerHTML='<div class="sc-empty">Sem dados.</div>';return;}
   var F={};
   series.fields.forEach(function(f){F[f.name]=(f.values&&f.values.toArray)?f.values.toArray():(f.values||[]);});
   var n=(F['#']||[]).length;
-  if(!n) return '<div class="sc-empty">Sem linhas.</div>';
+  if(!n){grid.innerHTML='<div class="sc-empty">Sem linhas.</div>';return;}
   var escH=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
   var fmtSecs=function(s){s=+s||0;var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return (h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;};
   var html='';
@@ -670,15 +676,18 @@ try{
       +'</div>'
     +'</div>';
   }
-  return { cards: html };
-}catch(e){return { cards: '<div class="sc-empty">Erro: '+(e&&e.message?e.message:e)+'</div>' };}
+  grid.innerHTML = html;
+}catch(e){
+  try{ htmlNode.querySelector('#grid').innerHTML =
+    '<div class="sc-empty">Erro: '+(e&&e.message?e.message:e)+'</div>'; }catch(_){}
+}
 """
 
 STEPS_HTML = """
 <div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;
   background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;box-sizing:border-box">
   <div id="grid" style="display:grid;
-       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${cards}</div>
+       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
 </div>
 """
 
