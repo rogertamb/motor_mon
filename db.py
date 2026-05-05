@@ -596,7 +596,7 @@ def _classify_cause(step_name: str, message: str) -> str:
 
 
 def get_failure_history(date_from: str = None, date_to: str = None,
-                        days: int = 15) -> List[Dict]:
+                        days: int = 90) -> List[Dict]:
     """
     date_from / date_to: 'YYYY-MM-DD'. Se ausentes, usa os últimos `days` dias.
     """

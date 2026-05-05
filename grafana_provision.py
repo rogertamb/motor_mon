@@ -368,13 +368,13 @@ ORDER BY j.name
 """
 
 Q["failure_count"] = """
-SELECT COUNT(*) AS falhas_15d
+SELECT COUNT(*) AS falhas_90d
 FROM msdb.dbo.sysjobhistory
 WHERE job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
   AND step_id    = 0
   AND run_status IN (0, 2, 3)
   AND run_date  >= CONVERT(int,
-        CONVERT(varchar(8), DATEADD(day, -15, GETDATE()), 112))
+        CONVERT(varchar(8), DATEADD(day, -90, GETDATE()), 112))
 """
 
 Q["failure_history"] = """
@@ -430,7 +430,7 @@ WHERE h.job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}'
   AND h.step_id    = 0
   AND h.run_status IN (0, 2, 3)
   AND h.run_date  >= CONVERT(int,
-        CONVERT(varchar(8), DATEADD(day, -15, GETDATE()), 112))
+        CONVERT(varchar(8), DATEADD(day, -90, GETDATE()), 112))
 ORDER BY h.run_date DESC, h.run_time DESC
 """
 
@@ -1161,25 +1161,25 @@ def build_dashboard(ds_uid: str) -> dict:
                             html=HERO_HTML, css=HERO_CSS, js=HERO_JS,
                             x=0, y=y, w=24, h=8)]; y += 8
 
-    # Row 2 — Historico do job
-    panels += [_row("Historico de Execucoes", y)]; y += 1
-    panels += [timeseries(ds_uid, "Duracao do Job ao Longo do Tempo",
-                          Q["job_history"], x=0, y=y, w=24, h=8)]; y += 8
-
-    # Row 3a — Steps em Cards (HTML Graphics, estilo Flask)
+    # Row 2a — Steps em Cards (HTML Graphics, estilo Flask)
     panels += [_row("Steps - Cards visuais (estilo Flask)", y)]; y += 1
     panels += [htmlgraphics(ds_uid, "Steps - Ultima Execucao vs Media (cards)",
                             Q["steps_overview"],
                             html=STEPS_HTML, css=STEPS_CSS, js=STEPS_JS,
                             x=0, y=y, w=24, h=14)]; y += 14
 
-    # Row 3b — Tabela detalhada (gauges) — opcional, mantida como fallback
+    # Row 2b — Tabela detalhada (gauges) — opcional, mantida como fallback
     panels += [_row("Steps - Tabela detalhada (gauges)", y)]; y += 1
     p = table(ds_uid, "Steps - Cards com Duracao, % vs Media e Sucesso",
               Q["steps_overview"], x=0, y=y, w=24, h=12,
               overrides=STEPS_OV)
     p["options"]["cellHeight"] = "md"
     panels += [p]; y += 12
+
+    # Row 3 — Historico do job
+    panels += [_row("Historico de Execucoes", y)]; y += 1
+    panels += [timeseries(ds_uid, "Duracao do Job ao Longo do Tempo",
+                          Q["job_history"], x=0, y=y, w=24, h=8)]; y += 8
 
     # Row 4 — Duracao por step (time series)
     panels += [_row("Historico de Duracao por Step", y)]; y += 1
@@ -1202,19 +1202,19 @@ def build_dashboard(ds_uid: str) -> dict:
     ]; y += 9
 
     # Row 7 — Histórico de falhas
-    panels += [_row("Historico de Falhas – Ultimos 15 Dias", y)]; y += 1
+    panels += [_row("Historico de Falhas – Ultimos 90 Dias", y)]; y += 1
     panels += [
-        stat(ds_uid, "Falhas nos Ultimos 15 Dias", Q["failure_count"],
+        stat(ds_uid, "Falhas nos Ultimos 90 Dias", Q["failure_count"],
              x=0, y=y, w=4, h=4,
              thresholds={
                  "mode": "absolute",
                  "steps": [
                      {"color": "green",  "value": None},
                      {"color": "yellow", "value": 1},
-                     {"color": "red",    "value": 4},
+                     {"color": "red",    "value": 8},
                  ],
              }),
-        table(ds_uid, "Detalhamento das Falhas", Q["failure_history"],
+        table(ds_uid, "Detalhamento das Falhas (90 dias)", Q["failure_history"],
               x=4, y=y, w=20, h=10, overrides=FAIL_OV),
     ]
 

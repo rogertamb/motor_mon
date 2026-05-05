@@ -24,7 +24,7 @@ def api_data():
 def api_failure_history():
     date_from = request.args.get('from')   # 'YYYY-MM-DD'
     date_to   = request.args.get('to')     # 'YYYY-MM-DD'
-    days      = int(request.args.get('days', 15))
+    days      = int(request.args.get('days', 90))
     return jsonify(get_failure_history(date_from=date_from,
                                        date_to=date_to,
                                        days=days))

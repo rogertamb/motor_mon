@@ -5,6 +5,16 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [1.5.0] – 2026-05-05
+
+### Alterado
+- **Histórico de Falhas: período padrão expandido de 15 para 90 dias** — tanto no Flask (default `days=90` em `app.py` e `db.py`, init carrega `isoDateMinus(90)`) quanto no Grafana (`Q["failure_count"]` e `Q["failure_history"]` com `DATEADD(day,-90,GETDATE())`)
+- Threshold do contador de falhas no Grafana ajustado para a janela maior: amarelo ≥1, vermelho ≥8 (antes ≥4 em 15d)
+- Textos hardcoded "últimos 15 dias" no Flask atualizados para "últimos 90 dias" (insights de causa recorrente e taxa de sucesso); empty state do histórico agora usa "no período selecionado"
+- **Ordem dos painéis no Grafana**: Steps (cards + tabela) movidos para logo após a Visão Geral; Histórico de Execuções (time series do job) movido para baixo dos Steps
+
+---
+
 ## [1.4.0] – 2026-05-05
 
 ### Adicionado

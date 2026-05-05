@@ -810,7 +810,7 @@ function renderFailureHistory(history) {
   if (!history || !history.length) {
     badge.textContent = '0';
     badge.className = 'badge bg-success ms-2';
-    panel.innerHTML = '<div class="text-muted-sm" style="color:var(--green)"><i class="fa-solid fa-circle-check me-1"></i>Nenhuma falha nos últimos 15 dias.</div>';
+    panel.innerHTML = '<div class="text-muted-sm" style="color:var(--green)"><i class="fa-solid fa-circle-check me-1"></i>Nenhuma falha no período selecionado.</div>';
     return;
   }
   if (history[0]?.error) {
@@ -910,7 +910,7 @@ function renderInsights(data) {
       insights.push({
         icon: 'fa-repeat', color: 'var(--red)', priority: 1,
         title: `Falha recorrente detectada`,
-        body: `A causa "<strong>${escHtml(topCause[0])}</strong>" aparece em <strong>${topCause[1]} de ${history.length}</strong> falhas nos últimos 15 dias. Priorize a correção desta causa raiz.`,
+        body: `A causa "<strong>${escHtml(topCause[0])}</strong>" aparece em <strong>${topCause[1]} de ${history.length}</strong> falhas nos últimos 90 dias. Priorize a correção desta causa raiz.`,
       });
     }
   }
@@ -949,16 +949,16 @@ function renderInsights(data) {
     });
   }
 
-  // 7. Taxa de sucesso geral dos 15 dias
+  // 7. Taxa de sucesso geral dos 90 dias
   if (history.length > 0) {
-    const totalDays = 15;
+    const totalDays = 90;
     const failDays  = history.length;
     const successPct = Math.round((totalDays - failDays) / totalDays * 100);
     if (successPct < 80) {
       insights.push({
         icon: 'fa-chart-line', color: 'var(--red)', priority: 1,
         title: `Alta frequência de falhas no período`,
-        body: `O job falhou em <strong>${failDays} dos últimos 15 dias</strong> (taxa de sucesso de ${successPct}%). Avalie uma revisão estrutural do processo.`,
+        body: `O job falhou em <strong>${failDays} dos últimos 90 dias</strong> (taxa de sucesso de ${successPct}%). Avalie uma revisão estrutural do processo.`,
       });
     }
   }
@@ -1209,7 +1209,7 @@ async function init() {
       // período de falhas → da última execução até hoje
       document.getElementById('failFrom').value = d.date;
     } else {
-      document.getElementById('failFrom').value = isoDateMinus(15);
+      document.getElementById('failFrom').value = isoDateMinus(90);
     }
   } catch (e) {
     document.getElementById('failFrom').value = isoDateMinus(15);
