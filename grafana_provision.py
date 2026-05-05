@@ -21,7 +21,6 @@ Uso:
 """
 
 import argparse
-import base64
 import json
 import sys
 import requests
@@ -454,13 +453,10 @@ def table(uid, title, sql, x, y, w=24, h=10, overrides=None):
         "fieldConfig": {"defaults": {}, "overrides": overrides or []},
     }
 
-def htmlgraphics(uid, title, sql, html, css, x, y, w=24, h=12):
-    """Painel via plugin gapit-htmlgraphics-panel (HTML Graphics).
-    Requer o plugin instalado: grafana-cli plugins install gapit-htmlgraphics-panel
-
-    Esta versao do plugin trata codeData como JSON. A logica dinamica
-    deve ir DENTRO do HTML como expressoes ${...} (avaliadas como JS)
-    com dynamicHtmlGraphics=True.
+def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
+    """Painel via plugin gapit-htmlgraphics-panel (v2+).
+    'js' deve ser o corpo de uma funcao JS que retorna um objeto cujas
+    chaves sao substituidas em 'html' como ${chave}.
     """
     return {
         "id": _next(), "type": "gapit-htmlgraphics-panel", "title": title,
@@ -470,7 +466,7 @@ def htmlgraphics(uid, title, sql, html, css, x, y, w=24, h=12):
         "options": {
             "html":               html,
             "css":                css,
-            "codeData":           "{}",   # JSON valido obrigatorio
+            "codeData":           js,
             "renderOnMount":      True,
             "centerAlignContent": False,
             "useGrandResult":     False,
@@ -615,8 +611,7 @@ STEPS_OV = [
 
 # ─── HTML Graphics: cards de steps no estilo Flask ────────────────────────────
 
-_STEPS_JS_SRC = r"""
-(function(){
+STEPS_JS = r"""
 try{
   var series=(data&&data.series&&data.series[0])||null;
   if(!series||!series.fields||!series.fields.length) return '<div class="sc-empty">Sem dados.</div>';
@@ -675,24 +670,17 @@ try{
       +'</div>'
     +'</div>';
   }
-  return html;
-}catch(e){return '<div class="sc-empty">Erro: '+(e&&e.message?e.message:e)+'</div>';}
-})()
+  return { cards: html };
+}catch(e){return { cards: '<div class="sc-empty">Erro: '+(e&&e.message?e.message:e)+'</div>' };}
 """
 
-# base64 do JS — contem APENAS [A-Za-z0-9+/=], sem '}' que confundiria
-# o parser de ${...} do plugin (regex nao-balanceada).
-_STEPS_JS_B64 = base64.b64encode(_STEPS_JS_SRC.strip().encode("utf-8")).decode("ascii")
-
-STEPS_HTML = (
-    '<div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;'
-    'background:#0d1117;color:#e6edf3;font-family:\'Segoe UI\',sans-serif;'
-    'box-sizing:border-box">'
-    '<div id="grid" style="display:grid;'
-    'grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">'
-    '${eval(atob(\'' + _STEPS_JS_B64 + '\'))}'
-    '</div></div>'
-)
+STEPS_HTML = """
+<div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;
+  background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;box-sizing:border-box">
+  <div id="grid" style="display:grid;
+       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${cards}</div>
+</div>
+"""
 
 STEPS_CSS = """
 #root { box-sizing:border-box; }
@@ -934,7 +922,7 @@ def build_dashboard(ds_uid: str) -> dict:
     panels += [_row("Steps - Cards visuais (estilo Flask)", y)]; y += 1
     panels += [htmlgraphics(ds_uid, "Steps - Ultima Execucao vs Media (cards)",
                             Q["steps_overview"],
-                            html=STEPS_HTML, css=STEPS_CSS,
+                            html=STEPS_HTML, css=STEPS_CSS, js=STEPS_JS,
                             x=0, y=y, w=24, h=14)]; y += 14
 
     # Row 3b — Tabela detalhada (gauges) — opcional, mantida como fallback
