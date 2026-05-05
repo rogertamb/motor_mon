@@ -1,5 +1,5 @@
 from flask import Flask, render_template, jsonify, request
-from db import get_all_data, get_last_execution_date
+from db import get_all_data, get_last_execution_date, get_failure_history
 
 app = Flask(__name__)
 
@@ -18,6 +18,16 @@ def api_last_date():
 def api_data():
     target_date = request.args.get('date')  # 'YYYY-MM-DD' ou None
     return jsonify(get_all_data(target_date))
+
+
+@app.route('/api/failure-history')
+def api_failure_history():
+    date_from = request.args.get('from')   # 'YYYY-MM-DD'
+    date_to   = request.args.get('to')     # 'YYYY-MM-DD'
+    days      = int(request.args.get('days', 15))
+    return jsonify(get_failure_history(date_from=date_from,
+                                       date_to=date_to,
+                                       days=days))
 
 
 if __name__ == '__main__':

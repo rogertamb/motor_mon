@@ -302,7 +302,46 @@
     </div>
   </div>
 
-  <!-- ── ROW 5: Sugestões de Monitoramento ────────────────────────────────── -->
+  <!-- ── ROW 5: Histórico de Falhas ──────────────────────────────────────── -->
+  <div class="card-dark p-3 mb-3">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <div class="section-title">
+        <i class="fa-solid fa-circle-exclamation me-1 text-danger"></i>
+        Histórico de Falhas
+        <span class="badge bg-danger ms-2" id="failCountBadge">0</span>
+      </div>
+
+      <!-- Controles de período -->
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="d-flex align-items-center gap-1">
+          <span class="text-muted-sm">De</span>
+          <input type="date" id="failFrom" class="date-input" oninput="loadFailureHistory()" />
+          <span class="text-muted-sm">até</span>
+          <input type="date" id="failTo"   class="date-input" oninput="loadFailureHistory()" />
+        </div>
+        <button class="btn-live" onclick="setFailPeriod(15)"  title="Últimos 15 dias">15d</button>
+        <button class="btn-live" onclick="setFailPeriod(30)"  title="Últimos 30 dias">30d</button>
+        <button class="btn-live" onclick="setFailPeriod(90)"  title="Últimos 90 dias">90d</button>
+        <button class="btn-live" onclick="setFailToday()"     title="Apenas hoje">Hoje</button>
+      </div>
+    </div>
+    <div id="failureHistoryPanel">
+      <div class="text-muted-sm">Carregando…</div>
+    </div>
+  </div>
+
+  <!-- ── ROW 6: Insights ──────────────────────────────────────────────────── -->
+  <div class="card-dark p-3 mb-3">
+    <div class="section-title mb-3">
+      <i class="fa-solid fa-lightbulb me-1" style="color:var(--yellow)"></i>
+      Insights do Processo
+    </div>
+    <div id="insightsPanel">
+      <div class="text-muted-sm">Aguardando dados…</div>
+    </div>
+  </div>
+
+  <!-- ── ROW 7: Sugestões de Monitoramento ────────────────────────────────── -->
   <div class="card-dark p-3 mb-3">
     <div class="section-title mb-3">
       <i class="fa-solid fa-lightbulb me-1" style="color:var(--yellow)"></i>
@@ -664,6 +703,194 @@ function renderRelatedJobs(jobs) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Render: Failure History
+// ═══════════════════════════════════════════════════════════════════════════
+function renderFailureHistory(history) {
+  const panel = document.getElementById('failureHistoryPanel');
+  const badge = document.getElementById('failCountBadge');
+
+  if (!history || !history.length) {
+    badge.textContent = '0';
+    badge.className = 'badge bg-success ms-2';
+    panel.innerHTML = '<div class="text-muted-sm" style="color:var(--green)"><i class="fa-solid fa-circle-check me-1"></i>Nenhuma falha nos últimos 15 dias.</div>';
+    return;
+  }
+  if (history[0]?.error) {
+    panel.innerHTML = `<div class="alert alert-warning small">${escHtml(history[0].error)}</div>`;
+    return;
+  }
+
+  badge.textContent = history.length;
+  badge.className = 'badge bg-danger ms-2';
+
+  // Agrupa causas para mostrar padrão
+  const causeCounts = {};
+  history.forEach(f => {
+    causeCounts[f.cause] = (causeCounts[f.cause] || 0) + 1;
+  });
+
+  panel.innerHTML = `
+  <div class="table-responsive">
+    <table class="table table-sm table-dark mb-0" style="font-size:.78rem">
+      <thead>
+        <tr>
+          <th>Data / Hora</th>
+          <th>Status</th>
+          <th>Duração</th>
+          <th>Step com Falha</th>
+          <th>Possível Causa</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${history.map((f, i) => `
+        <tr>
+          <td class="text-nowrap">${fmtDt(f.datetime)}</td>
+          <td>${statusBadge(f.job_status)}</td>
+          <td class="text-nowrap">${escHtml(f.duration_hms)}</td>
+          <td>
+            ${f.failed_step_id ? `<span class="badge bg-secondary me-1">#${f.failed_step_id}</span>` : ''}
+            <span style="color:#e6edf3">${escHtml(f.failed_step)}</span>
+          </td>
+          <td style="color:var(--yellow)">${escHtml(f.cause)}</td>
+          <td>
+            ${f.step_message ? `
+            <a class="collapse-link" data-bs-toggle="collapse" href="#failMsg${i}">
+              <i class="fa-solid fa-message" style="font-size:.7rem"></i>
+            </a>
+            <div class="collapse" id="failMsg${i}">
+              <pre class="cmd mt-1" style="font-size:.68rem">${escHtml(f.step_message)}</pre>
+            </div>` : ''}
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Render: Insights dinâmicos
+// ═══════════════════════════════════════════════════════════════════════════
+function renderInsights(data) {
+  const panel = document.getElementById('insightsPanel');
+  const insights = [];
+
+  const steps   = data.steps   || [];
+  const history = data.failure_history || [];
+  const jobs    = data.related_jobs    || [];
+
+  // 1. Steps com baixa taxa de sucesso
+  const unstable = steps.filter(s => s.run_count >= 5 && s.success_rate < 95 && !s.not_executed);
+  if (unstable.length) {
+    unstable.forEach(s => {
+      insights.push({
+        icon: 'fa-triangle-exclamation', color: 'var(--red)', priority: 1,
+        title: `Step instável: <strong>${escHtml(s.step_name)}</strong>`,
+        body: `Taxa de sucesso de <strong>${s.success_rate}%</strong> nos últimos 90 dias (${s.run_count} execuções). Investigue os erros recorrentes neste step.`,
+      });
+    });
+  }
+
+  // 2. Steps com anomalia de duração ativa
+  const anomalies = steps.filter(s => s.is_anomaly && !s.not_executed);
+  if (anomalies.length) {
+    anomalies.forEach(s => {
+      insights.push({
+        icon: 'fa-clock', color: 'var(--yellow)', priority: 2,
+        title: `Anomalia de duração: <strong>${escHtml(s.step_name)}</strong>`,
+        body: `${escHtml(s.anomaly_reason)}. Verifique volume de dados, locks ou degradação de índices.`,
+      });
+    });
+  }
+
+  // 3. Padrão de falha recorrente
+  if (history.length >= 3) {
+    const causeCounts = {};
+    history.forEach(f => { causeCounts[f.cause] = (causeCounts[f.cause] || 0) + 1; });
+    const topCause = Object.entries(causeCounts).sort((a,b) => b[1]-a[1])[0];
+    if (topCause[1] >= 2) {
+      insights.push({
+        icon: 'fa-repeat', color: 'var(--red)', priority: 1,
+        title: `Falha recorrente detectada`,
+        body: `A causa "<strong>${escHtml(topCause[0])}</strong>" aparece em <strong>${topCause[1]} de ${history.length}</strong> falhas nos últimos 15 dias. Priorize a correção desta causa raiz.`,
+      });
+    }
+  }
+
+  // 4. Step mais lento em relação à média
+  const slowSteps = steps
+    .filter(s => s.avg_duration_secs > 0 && s.last_duration_secs > s.avg_duration_secs * 1.3 && !s.not_executed && !s.is_anomaly)
+    .sort((a,b) => (b.last_duration_secs/b.avg_duration_secs) - (a.last_duration_secs/a.avg_duration_secs))
+    .slice(0, 2);
+  slowSteps.forEach(s => {
+    const pct = Math.round((s.last_duration_secs / s.avg_duration_secs - 1) * 100);
+    insights.push({
+      icon: 'fa-hourglass-half', color: 'var(--yellow)', priority: 3,
+      title: `Step mais lento que o normal: <strong>${escHtml(s.step_name)}</strong>`,
+      body: `Última execução ${pct}% acima da média histórica (${s.last_duration_hms} vs média ${s.avg_duration_hms}). Possível crescimento de volume ou fragmentação de índices.`,
+    });
+  });
+
+  // 5. Jobs relacionados com falha
+  const failedJobs = jobs.filter(j => j.last_status?.code === 0 && !j.is_running);
+  if (failedJobs.length) {
+    insights.push({
+      icon: 'fa-circle-nodes', color: 'var(--red)', priority: 2,
+      title: `Jobs relacionados com falha`,
+      body: `${failedJobs.map(j => `<strong>${escHtml(j.name)}</strong>`).join(', ')} estão com status de falha. Verifique dependências e ordem de execução.`,
+    });
+  }
+
+  // 6. Steps sem execução no dia
+  const skipped = steps.filter(s => s.not_executed);
+  if (skipped.length && data.is_historical) {
+    insights.push({
+      icon: 'fa-forward', color: 'var(--gray)', priority: 4,
+      title: `${skipped.length} step(s) não executaram nesta data`,
+      body: `Steps pulados: ${skipped.map(s => `<strong>#${s.step_id} ${escHtml(s.step_name)}</strong>`).join(', ')}. Pode indicar que o job falhou antes de atingir esses steps ou que o fluxo tomou caminho alternativo.`,
+    });
+  }
+
+  // 7. Taxa de sucesso geral dos 15 dias
+  if (history.length > 0) {
+    const totalDays = 15;
+    const failDays  = history.length;
+    const successPct = Math.round((totalDays - failDays) / totalDays * 100);
+    if (successPct < 80) {
+      insights.push({
+        icon: 'fa-chart-line', color: 'var(--red)', priority: 1,
+        title: `Alta frequência de falhas no período`,
+        body: `O job falhou em <strong>${failDays} dos últimos 15 dias</strong> (taxa de sucesso de ${successPct}%). Avalie uma revisão estrutural do processo.`,
+      });
+    }
+  }
+
+  if (!insights.length) {
+    panel.innerHTML = `<div class="text-muted-sm" style="color:var(--green)">
+      <i class="fa-solid fa-circle-check me-1"></i>Nenhum problema identificado no momento. Processo operando dentro dos parâmetros normais.
+    </div>`;
+    return;
+  }
+
+  insights.sort((a,b) => a.priority - b.priority);
+
+  const cols = [insights.slice(0, Math.ceil(insights.length/2)), insights.slice(Math.ceil(insights.length/2))];
+  panel.innerHTML = `<div class="row g-2">
+    ${cols.map(col => `
+    <div class="col-12 col-md-6">
+      ${col.map(ins => `
+      <div class="suggestion-item" style="border-left-color:${ins.color}">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="fa-solid ${ins.icon}" style="color:${ins.color};font-size:.85rem"></i>
+          <span style="font-size:.82rem">${ins.title}</span>
+        </div>
+        <div class="text-muted-sm">${ins.body}</div>
+      </div>`).join('')}
+    </div>`).join('')}
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Escape HTML
 // ═══════════════════════════════════════════════════════════════════════════
 function escHtml(str) {
@@ -749,6 +976,53 @@ function updateModeBadges(selectedDate) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Failure History – período independente
+// ═══════════════════════════════════════════════════════════════════════════
+let _failLoading = false;
+
+function isoDateMinus(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function setFailPeriod(days) {
+  document.getElementById('failFrom').value = isoDateMinus(days);
+  document.getElementById('failTo').value   = todayISO();
+  loadFailureHistory();
+}
+
+function setFailToday() {
+  document.getElementById('failFrom').value = todayISO();
+  document.getElementById('failTo').value   = todayISO();
+  loadFailureHistory();
+}
+
+async function loadFailureHistory() {
+  if (_failLoading) return;
+  _failLoading = true;
+
+  const from = document.getElementById('failFrom').value;
+  const to   = document.getElementById('failTo').value;
+
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to)   params.set('to',   to);
+
+  try {
+    const resp = await fetch(`/api/failure-history?${params}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderFailureHistory(data);
+  } catch (err) {
+    document.getElementById('failureHistoryPanel').innerHTML =
+      `<div class="alert alert-danger small">Erro ao carregar falhas: ${escHtml(err.message)}</div>`;
+  } finally {
+    _failLoading = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Auto-refresh (ativo apenas quando job está rodando)
 // ═══════════════════════════════════════════════════════════════════════════
 let _autoTimer = null;
@@ -790,6 +1064,7 @@ async function doRefresh() {
     renderLocks(data.locks);
     renderSemaphoreSteps(data.semaphore_steps);
     renderRelatedJobs(data.related_jobs);
+    renderInsights(data);
 
     document.getElementById('lastRefresh').textContent =
       new Date(data.refreshed_at).toLocaleTimeString('pt-BR');
@@ -817,20 +1092,34 @@ async function doRefresh() {
 // Inicialização: busca última data de execução → seta picker → carrega dados
 // ═══════════════════════════════════════════════════════════════════════════
 async function init() {
-  // Define picker com hoje enquanto busca a última execução
-  document.getElementById('datePicker').value = todayISO();
-  document.getElementById('datePicker').max   = todayISO();
+  const today = todayISO();
+  document.getElementById('datePicker').value = today;
+  document.getElementById('datePicker').max   = today;
+
+  // Período de falhas: placeholder enquanto carrega
+  document.getElementById('failFrom').max = today;
+  document.getElementById('failTo').max   = today;
+  document.getElementById('failTo').value = today;
 
   try {
     const r = await fetch('/api/last-execution-date');
     const d = await r.json();
     if (d.date) {
       _lastExecDate = d.date;
+      // seletor principal → última execução
       document.getElementById('datePicker').value = d.date;
+      // período de falhas → da última execução até hoje
+      document.getElementById('failFrom').value = d.date;
+    } else {
+      document.getElementById('failFrom').value = isoDateMinus(15);
     }
-  } catch (e) { /* usa hoje */ }
+  } catch (e) {
+    document.getElementById('failFrom').value = isoDateMinus(15);
+  }
 
+  // carrega em paralelo
   doRefresh();
+  loadFailureHistory();
 }
 
 init();

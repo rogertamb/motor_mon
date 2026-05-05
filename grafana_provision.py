@@ -24,6 +24,10 @@ import argparse
 import json
 import sys
 import requests
+import urllib3
+
+# Grafana interno com certificado autoassinado — desabilita verificação SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ─── Configuração ─────────────────────────────────────────────────────────────
 
@@ -32,7 +36,7 @@ GRAFANA_TOKEN = "SEU_SERVICE_ACCOUNT_TOKEN"   # glsa_xxxxxxxxxxxxxxxx
 
 # Nome exato do datasource SQL Server ja configurado no Grafana.
 # Execute com --list-ds para listar os datasources disponiveis.
-DS_NAME = "FORTBRS-DWBI03"
+DS_NAME = "DWBI03-SKYONE"
 
 JOB_NAME        = "0_MAIN_FORTBRAS_MOTOR_ABASTECIMENTO"
 DASHBOARD_UID   = "motor-abastecimento"
@@ -44,7 +48,7 @@ FOLDER_ID       = 0   # 0 = pasta General
 _DT = (
     "DATEADD(SECOND,"
     "(run_time/10000)*3600+((run_time%10000)/100)*60+(run_time%100),"
-    "CAST(CAST(run_date AS CHAR(8)) AS DATE))"
+    "CAST(CAST(run_date AS CHAR(8)) AS DATETIME))"
 )
 
 # ─── SQL Queries ──────────────────────────────────────────────────────────────
@@ -269,7 +273,7 @@ OUTER APPLY (
         run_status,
         DATEADD(SECOND,
             (run_time/10000)*3600+((run_time%10000)/100)*60+(run_time%100),
-            CAST(CAST(run_date AS CHAR(8)) AS DATE)) AS last_run_dt,
+            CAST(CAST(run_date AS CHAR(8)) AS DATETIME)) AS last_run_dt,
         (run_duration/10000)*3600+((run_duration%10000)/100)*60+(run_duration%100) AS dur
     FROM  msdb.dbo.sysjobhistory
     WHERE job_id = j.job_id AND step_id = 0
@@ -282,6 +286,73 @@ WHERE j.name LIKE '%MOTOR%'
    OR j.name LIKE '%CRM%'
    OR j.name LIKE '%BUQUET%'
 ORDER BY j.name
+"""
+
+Q["failure_count"] = """
+SELECT COUNT(*) AS falhas_15d
+FROM msdb.dbo.sysjobhistory
+WHERE job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
+  AND step_id    = 0
+  AND run_status IN (0, 2, 3)
+  AND run_date  >= CONVERT(int,
+        CONVERT(varchar(8), DATEADD(day, -15, GETDATE()), 112))
+"""
+
+Q["failure_history"] = """
+SELECT
+    CONVERT(varchar(16),
+        DATEADD(SECOND,
+            (h.run_time/10000)*3600+((h.run_time%10000)/100)*60+(h.run_time%100),
+            CAST(CAST(h.run_date AS CHAR(8)) AS DATETIME)
+        ), 120)                                                    AS [Data/Hora],
+    CONCAT(
+        (h.run_duration/10000),'h ',
+        ((h.run_duration%10000)/100),'m ',
+        (h.run_duration%100),'s')                                 AS [Duracao],
+    ISNULL('#'+CAST(fs.step_id AS VARCHAR)+' '+fs.step_name,
+           '(nao identificado)')                                   AS [Step com Falha],
+    CASE
+        WHEN UPPER(ISNULL(fs.step_name,'')) LIKE '%SEMAFORO%'
+          OR UPPER(ISNULL(fs.step_name,'')) LIKE '%TRAVA%'
+          OR UPPER(ISNULL(fs.step_name,'')) LIKE '%WAIT%'
+            THEN 'Semaforo / Trava'
+        WHEN UPPER(ISNULL(fs.message,h.message)) LIKE '%DEADLOCK%'
+            THEN 'Deadlock'
+        WHEN UPPER(ISNULL(fs.message,h.message)) LIKE '%TIMEOUT%'
+          OR UPPER(ISNULL(fs.message,h.message)) LIKE '%TIMED OUT%'
+            THEN 'Timeout'
+        WHEN UPPER(ISNULL(fs.message,h.message)) LIKE '%LOGIN%'
+          OR UPPER(ISNULL(fs.message,h.message)) LIKE '%AUTHENTICATION%'
+            THEN 'Autenticacao / Permissao'
+        WHEN UPPER(ISNULL(fs.message,h.message)) LIKE '%NETWORK%'
+          OR UPPER(ISNULL(fs.message,h.message)) LIKE '%CONNECTION%'
+            THEN 'Conectividade'
+        WHEN UPPER(ISNULL(fs.step_name,'')) LIKE '%BUQUET%'
+          OR UPPER(ISNULL(fs.step_name,'')) LIKE '%ENVIA%'
+            THEN 'Envio de Arquivos'
+        WHEN UPPER(ISNULL(fs.step_name,'')) LIKE '%CRM%'
+            THEN 'Integracao CRM'
+        WHEN UPPER(ISNULL(fs.step_name,'')) LIKE '%ODS%'
+            THEN 'Camada ODS'
+        ELSE 'Investigar mensagem'
+    END                                                            AS [Possivel Causa],
+    LEFT(ISNULL(fs.message, h.message), 300)                      AS [Mensagem]
+FROM msdb.dbo.sysjobhistory h
+OUTER APPLY (
+    SELECT TOP 1 sh.step_id, sh.step_name, sh.message
+    FROM msdb.dbo.sysjobhistory sh
+    WHERE sh.job_id   = h.job_id
+      AND sh.run_date = h.run_date
+      AND sh.step_id  > 0
+      AND sh.run_status = 0
+    ORDER BY sh.run_time DESC
+) fs
+WHERE h.job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = '${job_name}')
+  AND h.step_id    = 0
+  AND h.run_status IN (0, 2, 3)
+  AND h.run_date  >= CONVERT(int,
+        CONVERT(varchar(8), DATEADD(day, -15, GETDATE()), 112))
+ORDER BY h.run_date DESC, h.run_time DESC
 """
 
 Q["semaphore_steps"] = """
@@ -482,6 +553,20 @@ SEM_OV = [
     }),
 ]
 
+FAIL_OV = [
+    _color_ov("Possivel Causa", {
+        "Semaforo / Trava":      {"color": "orange", "index": 0},
+        "Deadlock":              {"color": "red",    "index": 1},
+        "Timeout":               {"color": "yellow", "index": 2},
+        "Autenticacao / Permissao": {"color": "purple", "index": 3},
+        "Conectividade":         {"color": "red",    "index": 4},
+        "Envio de Arquivos":     {"color": "orange", "index": 5},
+        "Integracao CRM":        {"color": "blue",   "index": 6},
+        "Camada ODS":            {"color": "blue",   "index": 7},
+        "Investigar mensagem":   {"color": "gray",   "index": 8},
+    }),
+]
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dashboard builder  (recebe o UID do datasource existente no Grafana)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -534,6 +619,23 @@ def build_dashboard(ds_uid: str) -> dict:
               x=0, y=y, w=15, h=9, overrides=JOBS_OV),
         table(ds_uid, "Steps Semaforo / Trava", Q["semaphore_steps"],
               x=15, y=y, w=9, h=9, overrides=SEM_OV),
+    ]; y += 9
+
+    # Row 7 — Histórico de falhas
+    panels += [_row("Historico de Falhas – Ultimos 15 Dias", y)]; y += 1
+    panels += [
+        stat(ds_uid, "Falhas nos Ultimos 15 Dias", Q["failure_count"],
+             x=0, y=y, w=4, h=4,
+             thresholds={
+                 "mode": "absolute",
+                 "steps": [
+                     {"color": "green",  "value": None},
+                     {"color": "yellow", "value": 1},
+                     {"color": "red",    "value": 4},
+                 ],
+             }),
+        table(ds_uid, "Detalhamento das Falhas", Q["failure_history"],
+              x=4, y=y, w=20, h=10, overrides=FAIL_OV),
     ]
 
     return {
@@ -582,6 +684,7 @@ def build_dashboard(ds_uid: str) -> dict:
 
 def _session(token: str) -> requests.Session:
     s = requests.Session()
+    s.verify = False  # certificado autoassinado
     s.headers.update({
         "Authorization": f"Bearer {token}",
         "Content-Type":  "application/json",

@@ -562,7 +562,110 @@ def get_related_jobs(target_date: str = None) -> List[Dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. ANÁLISE DE SEMÁFOROS (extrai das commands dos steps)
+# 5. HISTÓRICO DE FALHAS (últimos 15 dias) + CLASSIFICAÇÃO DE CAUSA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_cause(step_name: str, message: str) -> str:
+    n = (step_name or '').upper()
+    m = (message  or '').upper()
+    if any(k in n for k in ('SEMAFORO', 'TRAVA', 'WAIT', 'LOCK')):
+        return 'Semáforo / Trava — recurso não liberado por outra execução'
+    if 'DEADLOCK' in m:
+        return 'Deadlock — conflito entre transações concorrentes'
+    if any(k in m for k in ('TIMEOUT', 'TIMED OUT', 'QUERY TIMEOUT')):
+        return 'Timeout — query ou conexão excedeu o limite de tempo'
+    if any(k in m for k in ('LOGIN FAILED', 'AUTHENTICATION', 'PASSWORD', 'LOGON')):
+        return 'Autenticação — falha de login ou permissão insuficiente'
+    if any(k in m for k in ('NETWORK', 'TRANSPORT', 'CONNECTION', 'TCP', 'NAMED PIPE')):
+        return 'Conectividade — falha de rede ou servidor indisponível'
+    if any(k in m for k in ('DISK', 'FULL', 'NO SPACE', 'LOG IS FULL', 'TEMPDB')):
+        return 'Espaço em disco — banco, log ou tempdb cheio'
+    if any(k in n for k in ('BUQUET', 'ENVIA', 'ARQUIVO', 'FILE', 'FTP', 'SFTP')):
+        return 'Envio de arquivos — falha na transferência para storage externo'
+    if 'CRM' in n:
+        return 'Integração CRM — falha na extração ou carga de dados CRM'
+    if 'ODS' in n:
+        return 'Camada ODS — falha na extração ou transformação de dados'
+    if 'PHOENIX' in n:
+        return 'Integração Phoenix — falha na extração ou carga Phoenix'
+    if any(k in n for k in ('MOTOR', 'ABASTECIMENTO')):
+        return 'Núcleo do motor — erro na lógica principal de abastecimento'
+    if any(k in m for k in ('PERMISSION', 'ACCESS DENIED', 'UNAUTHORIZED')):
+        return 'Permissão — usuário sem acesso ao objeto ou banco'
+    return 'Causa não identificada — analise a mensagem de erro do step'
+
+
+def get_failure_history(date_from: str = None, date_to: str = None,
+                        days: int = 15) -> List[Dict]:
+    """
+    date_from / date_to: 'YYYY-MM-DD'. Se ausentes, usa os últimos `days` dias.
+    """
+    if date_from and date_to:
+        int_from = _date_to_int(date_from)
+        int_to   = _date_to_int(date_to)
+        date_filter = "AND h.run_date BETWEEN ? AND ?"
+        params = (MAIN_JOB, int_from, int_to)
+    elif date_from:
+        int_from = _date_to_int(date_from)
+        date_filter = "AND h.run_date >= ?"
+        params = (MAIN_JOB, int_from)
+    else:
+        date_filter = """AND h.run_date >= CONVERT(int,
+            CONVERT(varchar(8), DATEADD(day, -?, GETDATE()), 112))"""
+        params = (MAIN_JOB, days)
+
+    sql = f"""
+    SELECT
+        h.run_date,
+        h.run_time,
+        h.run_duration,
+        h.run_status,
+        LEFT(h.message, 600)  AS job_message,
+        fs.step_id            AS failed_step_id,
+        fs.step_name          AS failed_step_name,
+        LEFT(fs.message, 600) AS step_message
+    FROM msdb.dbo.sysjobhistory h
+    OUTER APPLY (
+        SELECT TOP 1 sh.step_id, sh.step_name, sh.message
+        FROM msdb.dbo.sysjobhistory sh
+        WHERE sh.job_id   = h.job_id
+          AND sh.run_date = h.run_date
+          AND sh.step_id  > 0
+          AND sh.run_status IN (0, 2)
+        ORDER BY sh.run_time DESC
+    ) fs
+    WHERE h.job_id = (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = ?)
+      AND h.step_id    = 0
+      AND h.run_status IN (0, 2, 3)
+      {date_filter}
+    ORDER BY h.run_date DESC, h.run_time DESC
+    """
+    try:
+        with _connect() as conn:
+            rows = conn.execute(sql, *params).fetchall()
+            result = []
+            for r in rows:
+                dt = _to_dt(r.run_date, r.run_time)
+                secs = _secs(r.run_duration)
+                step_name = r.failed_step_name or ''
+                step_msg  = r.step_message   or r.job_message or ''
+                result.append({
+                    'datetime':        dt.isoformat() if dt else None,
+                    'duration_hms':    _hms(secs),
+                    'duration_secs':   secs,
+                    'job_status':      _status(r.run_status),
+                    'failed_step_id':  r.failed_step_id,
+                    'failed_step':     step_name or '(step não identificado)',
+                    'step_message':    step_msg[:400],
+                    'cause':           _classify_cause(step_name, step_msg),
+                })
+            return result
+    except Exception as e:
+        return [{'error': str(e)}]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. ANÁLISE DE SEMÁFOROS (extrai das commands dos steps)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_semaphore_steps() -> List[Dict]:
@@ -596,19 +699,19 @@ def get_semaphore_steps() -> List[Dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. ENDPOINT ÚNICO – agrega tudo para o dashboard
+# 7. ENDPOINT ÚNICO – agrega tudo para o dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_all_data(target_date: str = None) -> Dict:
     return {
-        'server':          SERVER,
-        'job_name':        MAIN_JOB,
-        'refreshed_at':    datetime.now().isoformat(),
-        'target_date':     target_date,
-        'is_historical':   bool(target_date and not _is_today(target_date)),
-        'job_status':      get_job_status(target_date),
-        'steps':           get_steps_analysis(target_date),
-        'locks':           get_active_locks(),          # sempre ao vivo
-        'related_jobs':    get_related_jobs(target_date),
-        'semaphore_steps': get_semaphore_steps(),
+        'server':           SERVER,
+        'job_name':         MAIN_JOB,
+        'refreshed_at':     datetime.now().isoformat(),
+        'target_date':      target_date,
+        'is_historical':    bool(target_date and not _is_today(target_date)),
+        'job_status':       get_job_status(target_date),
+        'steps':            get_steps_analysis(target_date),
+        'locks':            get_active_locks(),
+        'related_jobs':     get_related_jobs(target_date),
+        'semaphore_steps':  get_semaphore_steps(),
     }
