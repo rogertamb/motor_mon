@@ -21,6 +21,7 @@ Uso:
 """
 
 import argparse
+import base64
 import json
 import sys
 import requests
@@ -614,11 +615,8 @@ STEPS_OV = [
 
 # ─── HTML Graphics: cards de steps no estilo Flask ────────────────────────────
 
-STEPS_HTML = r"""
-<div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;
-  background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;box-sizing:border-box">
-  <div id="grid" style="display:grid;
-       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${(function(){
+_STEPS_JS_SRC = r"""
+(function(){
 try{
   var series=(data&&data.series&&data.series[0])||null;
   if(!series||!series.fields||!series.fields.length) return '<div class="sc-empty">Sem dados.</div>';
@@ -637,7 +635,7 @@ try{
     var stat=F['Status'][i]||'-';
     var semColor=stat==='Falhou'?'red':stat==='Cancelado'?'gray':stat==='Retry'?'yellow':stat==='Sucesso'?'green':'gray';
     var ratioCls=!avg?'none':ratio>1.5?'over':pctDiff>10?'warn':'ok';
-    var ratioLbl=pctDiff===null?'—':pctDiff>0?'+'+pctDiff+'%':pctDiff<0?pctDiff+'%':'=avg';
+    var ratioLbl=pctDiff===null?'-':pctDiff>0?'+'+pctDiff+'%':pctDiff<0?pctDiff+'%':'=avg';
     var trackMax=Math.max(last,avg*1.6,1);
     var fillW=Math.min(100,last/trackMax*100);
     var avgMark=avg>0?Math.min(100,avg/trackMax*100):null;
@@ -646,7 +644,7 @@ try{
     var srCls=sr>=95?'ok':sr>=80?'warn':'bad';
     var statCls=stat==='Sucesso'?'ok':stat==='Falhou'?'bad':stat==='Retry'?'warn':'idle';
     var anom=F['Anomalia']?F['Anomalia'][i]:'';
-    var anomTag=(anom==='Critica'||anom==='Lenta')?(' <span class="sc-anom" title="'+escH(anom)+'">⚠</span>'):'';
+    var anomTag=(anom==='Critica'||anom==='Lenta')?(' <span class="sc-anom" title="'+escH(anom)+'">!</span>'):'';
     var stepName=F['Step']?F['Step'][i]:'';
     var dbName=F['Database']?F['Database'][i]:'';
     var runs=F['Runs 90d']?F['Runs 90d'][i]:0;
@@ -664,7 +662,7 @@ try{
         +'</div>'
       +'</div>'
       +'<div class="sc-times">'
-        +'<span>⏱ <strong>'+fmtSecs(last)+'</strong></span>'
+        +'<span><strong>'+fmtSecs(last)+'</strong></span>'
         +'<span>avg '+fmtSecs(avg)+'</span>'
       +'</div>'
       +'<div class="sc-bar">'
@@ -679,9 +677,22 @@ try{
   }
   return html;
 }catch(e){return '<div class="sc-empty">Erro: '+(e&&e.message?e.message:e)+'</div>';}
-})()}</div>
-</div>
+})()
 """
+
+# base64 do JS — contem APENAS [A-Za-z0-9+/=], sem '}' que confundiria
+# o parser de ${...} do plugin (regex nao-balanceada).
+_STEPS_JS_B64 = base64.b64encode(_STEPS_JS_SRC.strip().encode("utf-8")).decode("ascii")
+
+STEPS_HTML = (
+    '<div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;'
+    'background:#0d1117;color:#e6edf3;font-family:\'Segoe UI\',sans-serif;'
+    'box-sizing:border-box">'
+    '<div id="grid" style="display:grid;'
+    'grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">'
+    '${eval(atob(\'' + _STEPS_JS_B64 + '\'))}'
+    '</div></div>'
+)
 
 STEPS_CSS = """
 #root { box-sizing:border-box; }
