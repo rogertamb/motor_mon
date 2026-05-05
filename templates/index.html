@@ -47,7 +47,7 @@
   .step-card {
     background: #161b22; border: 1px solid #30363d;
     border-radius: 8px; transition: transform .15s, border-color .15s;
-    cursor: pointer;
+    cursor: pointer; overflow: hidden; position: relative;
   }
   .step-card:hover  { transform: translateY(-3px); border-color: #58a6ff; }
   .step-card.border-green  { border-color: var(--green)  !important; }
@@ -55,6 +55,48 @@
   .step-card.border-red    { border-color: var(--red)    !important; }
   .step-card.border-blue   { border-color: var(--blue)   !important; }
   .step-card.border-gray   { border-color: var(--gray)   !important; }
+
+  /* top accent stripe */
+  .step-card .step-accent {
+    height: 3px; width: 100%; position: absolute; top: 0; left: 0;
+  }
+  .step-card.border-green  .step-accent { background: var(--green); }
+  .step-card.border-yellow .step-accent { background: var(--yellow); }
+  .step-card.border-red    .step-accent { background: var(--red); }
+  .step-card.border-blue   .step-accent { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; }
+  .step-card.border-gray   .step-accent { background: var(--gray); }
+
+  /* ratio gauge */
+  .step-ratio {
+    font-size: 1.1rem; font-weight: 700; line-height: 1;
+    min-width: 52px; text-align: right;
+  }
+  .step-ratio.ratio-ok     { color: var(--green); }
+  .step-ratio.ratio-warn   { color: var(--yellow); }
+  .step-ratio.ratio-over   { color: var(--red); }
+  .step-ratio.ratio-none   { color: var(--gray); }
+
+  /* comparison track */
+  .cmp-track {
+    position: relative; height: 10px; background: #21262d;
+    border-radius: 5px; overflow: visible;
+  }
+  .cmp-fill {
+    height: 100%; border-radius: 5px;
+    transition: width .4s ease;
+  }
+  .cmp-fill.ok   { background: var(--green); }
+  .cmp-fill.warn { background: var(--yellow); }
+  .cmp-fill.over { background: var(--red); }
+  /* avg marker */
+  .cmp-avg {
+    position: absolute; top: -3px; bottom: -3px;
+    width: 2px; background: #58a6ff; border-radius: 2px;
+  }
+  /* success ring */
+  .success-ring {
+    width: 34px; height: 34px; flex-shrink: 0;
+  }
 
   /* ── topbar ─────────────────────────────────────────────────── */
   .topbar {
@@ -516,41 +558,97 @@ function renderSteps(steps) {
   }
 
   grid.innerHTML = steps.map((s, idx) => {
-    const ratio = s.avg_duration_secs > 0
-      ? s.last_duration_secs / s.avg_duration_secs
-      : 0;
-    const barWidth = pct(s.last_duration_secs,
-      Math.max(s.max_duration_secs, s.last_duration_secs));
-    const barCls = ratio > 1.5 ? 'over' : ratio > 1.1 ? 'warn' : '';
+    const hasAvg = s.avg_duration_secs > 0 && s.last_duration_secs > 0;
+    const ratio  = hasAvg ? s.last_duration_secs / s.avg_duration_secs : 0;
+    const pctDiff = hasAvg ? Math.round((ratio - 1) * 100) : null;
 
-    const anomalyTag = s.is_anomaly
-      ? `<span class="badge anomaly-badge ms-1" title="${s.anomaly_reason}">
-           <i class="fa-solid fa-triangle-exclamation me-1"></i>Anomalia</span>`
+    // anomaly: flag if >10% over average
+    const isSlower = pctDiff !== null && pctDiff > 10;
+    const isFaster = pctDiff !== null && pctDiff < -10;
+
+    const ratioCls  = !hasAvg ? 'ratio-none'
+                    : ratio > 1.5 ? 'ratio-over'
+                    : isSlower    ? 'ratio-warn'
+                    : 'ratio-ok';
+
+    const ratioLabel = pctDiff === null ? '—'
+                     : pctDiff > 0  ? `+${pctDiff}%`
+                     : pctDiff < 0  ? `${pctDiff}%`
+                     : '=avg';
+
+    // comparison bar: track = max(last, avg*1.6), fill = last, marker = avg
+    const trackMax = Math.max(s.max_duration_secs || 0, s.last_duration_secs, (s.avg_duration_secs || 0) * 1.6, 1);
+    const fillW    = pct(s.last_duration_secs, trackMax);
+    const avgMark  = s.avg_duration_secs > 0 ? pct(s.avg_duration_secs, trackMax) : null;
+    const fillCls  = ratio > 1.5 ? 'over' : isSlower ? 'warn' : 'ok';
+
+    // success ring SVG (simple circle progress)
+    const sr  = parseFloat(s.success_rate) || 0;
+    const r   = 13; const circ = 2 * Math.PI * r;
+    const dash = (sr / 100) * circ;
+    const ringColor = sr >= 95 ? 'var(--green)' : sr >= 80 ? 'var(--yellow)' : 'var(--red)';
+
+    const anomalyTag = (s.is_anomaly || isSlower)
+      ? `<span class="badge anomaly-badge" style="font-size:.6rem"
+             title="${escHtml(s.anomaly_reason || 'Duração acima da média')}">
+           <i class="fa-solid fa-triangle-exclamation"></i></span>`
       : '';
 
     return `
     <div class="col-12 col-sm-6 col-md-4 col-lg-3 col-xl-2">
-      <div class="step-card border-${s.semaforo} p-2 h-100" onclick="openStep(${idx})">
-        <div class="d-flex align-items-center gap-1 mb-1">
-          ${semDot(s.semaforo)}
-          <span class="text-muted-sm fw-bold">#${s.step_id}</span>
-          ${anomalyTag}
-        </div>
-        <div class="fw-semibold" style="font-size:.82rem;line-height:1.2"
-             title="${escHtml(s.step_name)}">${escHtml(s.step_name)}</div>
-        <div class="mt-1">${statusBadge(s.last_status)}</div>
+      <div class="step-card border-${s.semaforo} p-0 h-100" onclick="openStep(${idx})">
+        <div class="step-accent"></div>
+        <div class="p-2 pt-3">
 
-        <div class="mt-2 text-muted-sm">Última: <strong>${s.last_duration_hms}</strong></div>
-        <div class="text-muted-sm">Média: <strong>${s.avg_duration_hms}</strong></div>
-        <div class="dur-bar-wrap mt-1">
-          <div class="dur-bar ${barCls}" style="width:${barWidth}%"></div>
-        </div>
+          <!-- header: # + name + status -->
+          <div class="d-flex align-items-start justify-content-between gap-1 mb-2">
+            <div style="min-width:0">
+              <div class="d-flex align-items-center gap-1">
+                <span class="text-muted-sm fw-bold">#${s.step_id}</span>
+                ${anomalyTag}
+              </div>
+              <div class="fw-semibold" style="font-size:.8rem;line-height:1.25;overflow:hidden;
+                   text-overflow:ellipsis;white-space:nowrap;max-width:160px"
+                   title="${escHtml(s.step_name)}">${escHtml(s.step_name)}</div>
+              <div class="mt-1">${statusBadge(s.last_status)}</div>
+            </div>
+            <!-- ratio badge -->
+            <div class="text-end" style="flex-shrink:0">
+              <div class="step-ratio ${ratioCls}">${ratioLabel}</div>
+              <div class="text-muted-sm" style="font-size:.65rem;white-space:nowrap">vs média</div>
+            </div>
+          </div>
 
-        <div class="d-flex justify-content-between mt-1 text-muted-sm">
-          <span title="Taxa de sucesso">${s.success_rate}% ok</span>
-          <span>${s.run_count} exec</span>
+          <!-- duration row -->
+          <div class="d-flex justify-content-between text-muted-sm mb-1" style="font-size:.72rem">
+            <span>⏱ <strong style="color:#e6edf3">${s.last_duration_hms}</strong></span>
+            <span>avg <strong style="color:#8b949e">${s.avg_duration_hms}</strong></span>
+          </div>
+
+          <!-- comparison track -->
+          <div class="cmp-track mb-2">
+            <div class="cmp-fill ${fillCls}" style="width:${fillW}%"></div>
+            ${avgMark !== null ? `<div class="cmp-avg" style="left:${avgMark}%" title="Média: ${s.avg_duration_hms}"></div>` : ''}
+          </div>
+
+          <!-- footer: success ring + db badge -->
+          <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-1">
+              <svg class="success-ring" viewBox="0 0 34 34">
+                <circle cx="17" cy="17" r="${r}" fill="none" stroke="#21262d" stroke-width="3.5"/>
+                <circle cx="17" cy="17" r="${r}" fill="none" stroke="${ringColor}" stroke-width="3.5"
+                  stroke-dasharray="${dash.toFixed(1)} ${circ.toFixed(1)}"
+                  stroke-linecap="round"
+                  transform="rotate(-90 17 17)"/>
+                <text x="17" y="21" text-anchor="middle"
+                  font-size="7" fill="${ringColor}" font-family="Segoe UI,sans-serif">${Math.round(sr)}%</text>
+              </svg>
+              <span class="text-muted-sm" style="font-size:.68rem">${s.run_count}x</span>
+            </div>
+            <span class="badge badge-db">${escHtml(s.database_name)}</span>
+          </div>
+
         </div>
-        <span class="badge badge-db mt-1">${s.database_name}</span>
       </div>
     </div>`;
   }).join('');

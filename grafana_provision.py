@@ -199,22 +199,27 @@ SELECT
         WHEN 1 THEN 'Sucesso' WHEN 0 THEN 'Falhou'
         WHEN 2 THEN 'Retry'   WHEN 3 THEN 'Cancelado' ELSE '-'
     END                                                                AS [Status],
-    ISNULL(CAST(
-        (l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100)
-    AS VARCHAR)+' s','-')                                             AS [Ult. Dur.],
-    ISNULL(CAST(ROUND(s.avg_s,0) AS VARCHAR)+' s','-')               AS [Media 90d],
-    ISNULL(CAST(ROUND(s.avg_s + 2*s.std_s,0) AS INT), 0)            AS [Limite +2std (s)],
-    ISNULL(CONCAT(CAST(ROUND(100.0*s.ok/NULLIF(s.total_runs,0),1)
-           AS VARCHAR),'%'),'-')                                      AS [Sucesso%],
+    CAST(ISNULL(
+        (l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100), 0
+    ) AS INT)                                                          AS [Ult. Dur.],
+    CAST(ISNULL(ROUND(s.avg_s,0), 0) AS INT)                          AS [Media 90d],
+    CASE
+        WHEN s.avg_s IS NULL OR s.avg_s = 0 THEN 0
+        ELSE CAST(ROUND(
+            100.0 *
+            ((l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100))
+            / s.avg_s, 0) AS INT)
+    END                                                                AS [% vs Media],
+    CAST(ISNULL(ROUND(100.0*s.ok/NULLIF(s.total_runs,0),1), 0) AS DECIMAL(5,1)) AS [Sucesso%],
     ISNULL(s.total_runs, 0)                                           AS [Runs 90d],
     CASE
-        WHEN s.avg_s IS NULL OR s.std_s IS NULL THEN '-'
+        WHEN s.avg_s IS NULL OR s.avg_s = 0 THEN 'Sem base'
         WHEN ((l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100))
-             > s.avg_s + 2*s.std_s THEN 'Alta'
-        WHEN  s.std_s > 0
-          AND s.avg_s - 2*s.std_s > 0
-          AND ((l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100))
-              < s.avg_s - 2*s.std_s THEN 'Baixa'
+             > s.avg_s * 1.5 THEN 'Critica'
+        WHEN ((l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100))
+             > s.avg_s * 1.10 THEN 'Lenta'
+        WHEN ((l.run_duration/10000)*3600+((l.run_duration%10000)/100)*60+(l.run_duration%100))
+             < s.avg_s * 0.90 AND s.avg_s > 5 THEN 'Rapida'
         ELSE 'Normal'
     END                                                                AS [Anomalia]
 FROM  msdb.dbo.sysjobsteps js
@@ -512,6 +517,37 @@ def _hide_ov(col):
         "properties": [{"id": "custom.hidden", "value": True}],
     }
 
+def _gauge_ov(col, unit, thresholds, mode="gradient-gauge"):
+    return {
+        "matcher": {"id": "byName", "options": col},
+        "properties": [
+            {"id": "unit",               "value": unit},
+            {"id": "thresholds",         "value": thresholds},
+            {"id": "custom.displayMode", "value": mode},
+            {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}},
+            {"id": "custom.align",       "value": "center"},
+        ],
+    }
+
+RATIO_THRESHOLDS = {
+    "mode": "absolute",
+    "steps": [
+        {"color": "green",  "value": None},
+        {"color": "yellow", "value": 110},
+        {"color": "red",    "value": 150},
+    ],
+}
+
+DUR_STEP_THRESHOLDS = {
+    "mode": "absolute",
+    "steps": [
+        {"color": "green",  "value": None},
+        {"color": "yellow", "value": 600},
+        {"color": "orange", "value": 1800},
+        {"color": "red",    "value": 3600},
+    ],
+}
+
 STEPS_OV = [
     _color_ov("Status", {
         "Sucesso":   {"color": "green",  "index": 0},
@@ -520,10 +556,24 @@ STEPS_OV = [
         "Cancelado": {"color": "gray",   "index": 3},
     }),
     _color_ov("Anomalia", {
-        "Normal": {"color": "green",  "index": 0},
-        "Alta":   {"color": "red",    "index": 1},
-        "Baixa":  {"color": "yellow", "index": 2},
+        "Normal":   {"color": "green",     "index": 0},
+        "Lenta":    {"color": "yellow",    "index": 1},
+        "Critica":  {"color": "red",       "index": 2},
+        "Rapida":   {"color": "blue",      "index": 3},
+        "Sem base": {"color": "dark-gray", "index": 4},
     }),
+    _gauge_ov("Ult. Dur.",  "s",       DUR_STEP_THRESHOLDS),
+    _gauge_ov("Media 90d",  "s",       DUR_STEP_THRESHOLDS),
+    _gauge_ov("% vs Media", "percent", RATIO_THRESHOLDS),
+    _gauge_ov("Sucesso%",   "percent", PCT_THRESHOLDS),
+    {
+        "matcher": {"id": "byName", "options": "#"},
+        "properties": [{"id": "custom.width", "value": 50}],
+    },
+    {
+        "matcher": {"id": "byName", "options": "Step"},
+        "properties": [{"id": "custom.width", "value": 260}],
+    },
 ]
 
 JOBS_OV = [
@@ -595,11 +645,13 @@ def build_dashboard(ds_uid: str) -> dict:
     panels += [timeseries(ds_uid, "Duracao do Job ao Longo do Tempo",
                           Q["job_history"], x=0, y=y, w=24, h=8)]; y += 8
 
-    # Row 3 — Tabela de steps
-    panels += [_row("Steps - Estatisticas e Anomalias (2 desvios-padrao)", y)]; y += 1
-    panels += [table(ds_uid, "Steps - Ultima Execucao + Media + Anomalia",
-                     Q["steps_overview"], x=0, y=y, w=24, h=12,
-                     overrides=STEPS_OV)]; y += 12
+    # Row 3 — Tabela de steps (cards visuais com gauges)
+    panels += [_row("Steps - Ultima Execucao vs Media + Anomalias (>10% lento)", y)]; y += 1
+    p = table(ds_uid, "Steps - Cards com Duracao, % vs Media e Sucesso",
+              Q["steps_overview"], x=0, y=y, w=24, h=14,
+              overrides=STEPS_OV)
+    p["options"]["cellHeight"] = "md"
+    panels += [p]; y += 14
 
     # Row 4 — Duracao por step (time series)
     panels += [_row("Historico de Duracao por Step", y)]; y += 1

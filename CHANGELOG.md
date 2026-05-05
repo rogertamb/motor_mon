@@ -5,6 +5,18 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [1.2.0] – 2026-05-05
+
+### Adicionado
+- **Steps – Flask**: cards repaginados com **stripe colorido** no topo, **badge `% vs média`** (verde ≤10%, amarelo 10–50% mais lento, vermelho >50%), **barra de comparação** com pino azul marcando a média histórica e **anel SVG de sucesso 90d** (verde ≥95%, amarelo ≥80%, vermelho <80%); gatilho automático de anomalia quando duração diverge >10% da média
+- **Steps – Grafana**: tabela convertida em "cards visuais" com **gauges gradientes** nas colunas `Ult. Dur.`, `Media 90d`, `% vs Media` e `Sucesso%`; coluna `Anomalia` com 5 estados (`Critica`, `Lenta`, `Normal`, `Rapida`, `Sem base`) e cores próprias; threshold de anomalia alinhado ao Flask (>10% lento)
+
+### Alterado
+- `Q["steps_overview"]`: colunas de duração agora numéricas (INT) para suporte a gauge cells; nova coluna `% vs Media`; classificação de anomalia baseada em proporção (1.10× / 1.50×) em vez de desvio-padrão
+- `cellHeight` do painel de steps elevado para `md` para melhor legibilidade dos gauges
+
+---
+
 ## [1.1.0] – 2026-05-05
 
 ### Adicionado
