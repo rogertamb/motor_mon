@@ -456,6 +456,9 @@ def table(uid, title, sql, x, y, w=24, h=10, overrides=None):
 def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
     """Painel via plugin gapit-htmlgraphics-panel (HTML Graphics).
     Requer o plugin instalado: grafana-cli plugins install gapit-htmlgraphics-panel
+
+    'js' deve ser um corpo de funcao que retorna um objeto cujas chaves
+    sao substituidas em 'html' como ${chave}.
     """
     return {
         "id": _next(), "type": "gapit-htmlgraphics-panel", "title": title,
@@ -463,23 +466,22 @@ def htmlgraphics(uid, title, sql, html, css, js, x, y, w=24, h=12):
         "datasource": _ds(uid),
         "targets": [_tgt(uid, sql, "table")],
         "options": {
-            "html": html,
-            "css":  css,
-            "codeData": "{}",
-            "renderOnMount":   True,
+            "html":               html,
+            "css":                css,
+            "codeData":           js,
+            "renderOnMount":      True,
             "centerAlignContent": False,
-            "useGrandResult":  False,
-            "calcsMode":       "html",
-            "add100Percentage": False,
+            "useGrandResult":     False,
+            "calcsMode":          "html",
+            "add100Percentage":   False,
             "dynamicHtmlGraphics": True,
-            "dynamicData":     True,
-            "dynamicProps":    False,
-            "dynamicFontSize": False,
-            "SVGBaseFix":      True,
-            "onInitOnResize":  False,
-            "rootCSS":         "",
-            "polygons":        [],
-            "codeOptions":     js,
+            "dynamicData":        True,
+            "dynamicProps":       False,
+            "dynamicFontSize":    False,
+            "SVGBaseFix":         True,
+            "onInitOnResize":     False,
+            "rootCSS":            "",
+            "polygons":           [],
         },
         "fieldConfig": {"defaults": {}, "overrides": []},
     }
@@ -613,9 +615,9 @@ STEPS_OV = [
 
 STEPS_HTML = """
 <div id="root" style="width:100%;height:100%;overflow:auto;padding:8px;
-  background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif">
+  background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;box-sizing:border-box">
   <div id="grid" style="display:grid;
-       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
+       grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${cards}</div>
 </div>
 """
 
@@ -684,21 +686,27 @@ STEPS_CSS = """
 """
 
 STEPS_JS = r"""
-// Recebe `data` (Grafana injeta) e popula #grid com cards no estilo Flask.
+// gapit-htmlgraphics-panel (codeData):
+// - 'data' eh injetado pelo plugin (panelData do Grafana)
+// - precisamos RETORNAR um objeto cujas chaves viram ${chave} no HTML
 try {
-  const grid = htmlNode.querySelector('#grid');
-  grid.innerHTML = '';
   const series = (data && data.series && data.series[0]) || null;
   if (!series || !series.fields || !series.fields.length) {
-    grid.innerHTML = '<div class="sc-empty">Sem dados.</div>'; return;
+    return { cards: '<div class="sc-empty">Sem dados.</div>' };
   }
   const F = {};
-  series.fields.forEach(f => F[f.name] = f.values.toArray ? f.values.toArray() : f.values);
+  series.fields.forEach(function (f) {
+    F[f.name] = (f.values && f.values.toArray) ? f.values.toArray() : (f.values || []);
+  });
   const n = (F['#'] || []).length;
-  const escH = s => String(s == null ? '' : s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
-  const fmtSecs = s => {
+  if (!n) return { cards: '<div class="sc-empty">Sem linhas.</div>' };
+
+  const escH = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  };
+  const fmtSecs = function (s) {
     s = +s || 0;
     const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
     return (h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;
@@ -706,8 +714,8 @@ try {
 
   let html = '';
   for (let i = 0; i < n; i++) {
-    const last  = +F['Ult. Dur.'][i]  || 0;
-    const avg   = +F['Media 90d'][i]  || 0;
+    const last  = +F['Ult. Dur.'][i] || 0;
+    const avg   = +F['Media 90d'][i] || 0;
     const ratio = avg > 0 ? last / avg : 0;
     const pctDiff = avg > 0 ? Math.round((ratio - 1) * 100) : null;
 
@@ -737,42 +745,46 @@ try {
       : stat === 'Falhou' ? 'bad'
       : stat === 'Retry'  ? 'warn' : 'idle';
 
-    const anom = F['Anomalia'][i];
+    const anom = F['Anomalia'] ? F['Anomalia'][i] : '';
     const anomTag = (anom === 'Critica' || anom === 'Lenta')
-      ? '<span class="sc-anom" title="'+escH(anom)+'">⚠</span>' : '';
+      ? ' <span class="sc-anom" title="'+escH(anom)+'">⚠</span>' : '';
 
-    html += `
-    <div class="sc-card ${semColor}">
-      <div class="sc-accent ${semColor}"></div>
-      <div class="sc-head">
-        <div style="min-width:0">
-          <div class="sc-id">#${escH(F['#'][i])}${anomTag}</div>
-          <div class="sc-name" title="${escH(F['Step'][i])}">${escH(F['Step'][i])}</div>
-          <span class="sc-status ${statCls}">${escH(stat)}</span>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div class="sc-ratio ${ratioCls}">${ratioLbl}</div>
-          <div class="sc-ratiolbl">vs média</div>
-        </div>
-      </div>
-      <div class="sc-times">
-        <span>⏱ <strong>${fmtSecs(last)}</strong></span>
-        <span>avg ${fmtSecs(avg)}</span>
-      </div>
-      <div class="sc-bar">
-        <div class="sc-fill ${fillCls}" style="width:${fillW}%"></div>
-        ${avgMark !== null ? '<div class="sc-mark" style="left:'+avgMark+'%"></div>' : ''}
-      </div>
-      <div class="sc-foot">
-        <span class="sc-success ${srCls}">${sr.toFixed(1)}% ok · <span class="sc-runs">${escH(F['Runs 90d'][i])}x</span></span>
-        <span class="sc-db">${escH(F['Database'][i])}</span>
-      </div>
-    </div>`;
+    const stepName = F['Step'] ? F['Step'][i] : '';
+    const dbName   = F['Database'] ? F['Database'][i] : '';
+    const runs     = F['Runs 90d'] ? F['Runs 90d'][i] : 0;
+
+    html +=
+      '<div class="sc-card '+semColor+'">' +
+        '<div class="sc-accent '+semColor+'"></div>' +
+        '<div class="sc-head">' +
+          '<div style="min-width:0">' +
+            '<div class="sc-id">#'+escH(F['#'][i])+anomTag+'</div>' +
+            '<div class="sc-name" title="'+escH(stepName)+'">'+escH(stepName)+'</div>' +
+            '<span class="sc-status '+statCls+'">'+escH(stat)+'</span>' +
+          '</div>' +
+          '<div style="text-align:right;flex-shrink:0">' +
+            '<div class="sc-ratio '+ratioCls+'">'+ratioLbl+'</div>' +
+            '<div class="sc-ratiolbl">vs media</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="sc-times">' +
+          '<span>⏱ <strong>'+fmtSecs(last)+'</strong></span>' +
+          '<span>avg '+fmtSecs(avg)+'</span>' +
+        '</div>' +
+        '<div class="sc-bar">' +
+          '<div class="sc-fill '+fillCls+'" style="width:'+fillW+'%"></div>' +
+          (avgMark !== null ? '<div class="sc-mark" style="left:'+avgMark+'%"></div>' : '') +
+        '</div>' +
+        '<div class="sc-foot">' +
+          '<span class="sc-success '+srCls+'">'+sr.toFixed(1)+'% ok &middot; '+
+            '<span class="sc-runs">'+escH(runs)+'x</span></span>' +
+          '<span class="sc-db">'+escH(dbName)+'</span>' +
+        '</div>' +
+      '</div>';
   }
-  grid.innerHTML = html;
+  return { cards: html };
 } catch (e) {
-  htmlNode.querySelector('#grid').innerHTML =
-    '<div class="sc-empty">Erro: '+(e && e.message)+'</div>';
+  return { cards: '<div class="sc-empty">Erro: '+(e && e.message ? e.message : e)+'</div>' };
 }
 """
 
