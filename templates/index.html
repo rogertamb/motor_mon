@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitor – Motor de Abastecimento</title>
+<link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+<link rel="stylesheet"
+  href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+  :root {
+    --green:  #00e676;
+    --yellow: #ffea00;
+    --red:    #ff1744;
+    --blue:   #2979ff;
+    --gray:   #546e7a;
+  }
+  body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; }
+
+  /* ── semáforo ──────────────────────────────────────────────── */
+  .sem {
+    display: inline-block; border-radius: 50%;
+    box-shadow: 0 0 0 2px #1c2128;
+  }
+  .sem-lg { width: 72px; height: 72px; }
+  .sem-sm { width: 18px; height: 18px; }
+  .sem-md { width: 26px; height: 26px; }
+
+  .sem-green  { background: var(--green);  box-shadow: 0 0 14px var(--green); }
+  .sem-yellow { background: var(--yellow); box-shadow: 0 0 14px var(--yellow); }
+  .sem-red    { background: var(--red);    box-shadow: 0 0 14px var(--red); }
+  .sem-blue   { background: var(--blue);   box-shadow: 0 0 14px var(--blue);
+                animation: pulse 1.2s ease-in-out infinite; }
+  .sem-gray   { background: var(--gray); }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50%      { opacity: .45; }
+  }
+
+  /* ── cards ─────────────────────────────────────────────────── */
+  .card-dark {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px;
+  }
+  .step-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; transition: transform .15s, border-color .15s;
+    cursor: pointer;
+  }
+  .step-card:hover  { transform: translateY(-3px); border-color: #58a6ff; }
+  .step-card.border-green  { border-color: var(--green)  !important; }
+  .step-card.border-yellow { border-color: var(--yellow) !important; }
+  .step-card.border-red    { border-color: var(--red)    !important; }
+  .step-card.border-blue   { border-color: var(--blue)   !important; }
+  .step-card.border-gray   { border-color: var(--gray)   !important; }
+
+  /* ── topbar ─────────────────────────────────────────────────── */
+  .topbar {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 10px 24px;
+  }
+  .datebar {
+    background: #0d1117; border-bottom: 1px solid #21262d;
+    padding: 7px 24px;
+  }
+
+  /* ── date controls ───────────────────────────────────────────── */
+  .date-input {
+    background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+    border-radius: 6px; padding: 4px 10px; font-size: .85rem;
+    cursor: pointer;
+  }
+  .date-input:focus { outline: none; border-color: #58a6ff; }
+  /* remove chrome calendar icon color quirk */
+  .date-input::-webkit-calendar-picker-indicator {
+    filter: invert(1); opacity:.6; cursor:pointer;
+  }
+  .btn-date-nav {
+    background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    border-radius: 6px; padding: 4px 10px; font-size: .85rem; line-height:1.4;
+  }
+  .btn-date-nav:hover { background:#30363d; color:#e6edf3; }
+  .btn-live {
+    background: #0d419d22; border: 1px solid #1f6feb66; color: #58a6ff;
+    border-radius: 6px; padding: 4px 12px; font-size: .8rem;
+  }
+  .btn-live:hover { background: #1f6feb33; }
+
+  /* ── histórico banner ────────────────────────────────────────── */
+  .hist-banner {
+    background: #3d2e0022; border: 1px solid #bb800066;
+    border-radius: 8px; padding: 6px 14px; font-size: .82rem;
+    color: #e3b341; display: none; align-items: center; gap: 8px;
+  }
+  .hist-banner.show { display: flex; }
+
+  /* ── lock badge ─────────────────────────────────────────────── */
+  .lock-blocked { border-left: 4px solid var(--red); }
+  .lock-normal  { border-left: 4px solid var(--gray); }
+
+  /* ── progress bar for duration ratio ───────────────────────── */
+  .dur-bar-wrap { height: 6px; background:#21262d; border-radius:4px; }
+  .dur-bar      { height: 6px; border-radius:4px; background: var(--green); }
+  .dur-bar.warn { background: var(--yellow); }
+  .dur-bar.over { background: var(--red); }
+
+  /* ── misc ───────────────────────────────────────────────────── */
+  .badge-db { background:#1f6feb22; border:1px solid #1f6feb66;
+              color:#58a6ff; font-size:.7rem; }
+  pre.cmd { background:#0d1117; border:1px solid #30363d; border-radius:6px;
+            font-size:.72rem; padding:10px; max-height:200px; overflow:auto;
+            color:#8b949e; white-space: pre-wrap; }
+  .refresh-btn { background:#238636; border:none; }
+  .refresh-btn:hover { background:#2ea043; }
+  .spinner-sm { width:16px; height:16px; }
+  .section-title { color:#8b949e; font-size:.75rem; font-weight:600;
+                   text-transform:uppercase; letter-spacing:.08em; }
+  .anomaly-badge { background:#ff174422; border:1px solid var(--red);
+                   color:var(--red); font-size:.68rem; }
+  .text-muted-sm { color:#8b949e; font-size:.78rem; }
+  a.collapse-link { color:#58a6ff; font-size:.75rem; text-decoration:none; }
+  a.collapse-link:hover { text-decoration:underline; }
+
+  /* ── suggestions panel ──────────────────────────────────────── */
+  .suggestion-item {
+    border-left: 3px solid #1f6feb; padding: 8px 14px;
+    background: #1f6feb0d; border-radius: 0 6px 6px 0;
+    margin-bottom: 8px; font-size: .82rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════ TOP BAR ═════════════════════ -->
+<div class="topbar d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-3">
+    <i class="fa-solid fa-database" style="color:#58a6ff;font-size:1.3rem"></i>
+    <div>
+      <div class="fw-bold" style="font-size:1rem">Monitor – Motor de Abastecimento</div>
+      <div class="text-muted-sm" id="serverLabel">FORTBRS-DWBI03</div>
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-3">
+    <div class="text-muted-sm text-end">
+      <div>Última atualização</div>
+      <div id="lastRefresh" class="fw-semibold" style="color:#e6edf3">—</div>
+    </div>
+    <button class="btn refresh-btn text-white px-3 py-2" onclick="doRefresh()" id="refreshBtn">
+      <i class="fa-solid fa-rotate-right me-2" id="refreshIcon"></i>Atualizar
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ DATE BAR ══════════════════════ -->
+<div class="datebar d-flex align-items-center gap-3 flex-wrap">
+
+  <!-- Navegação de datas -->
+  <div class="d-flex align-items-center gap-1">
+    <button class="btn-date-nav" onclick="stepDate(-1)" title="Dia anterior">
+      <i class="fa-solid fa-chevron-left"></i>
+    </button>
+    <input type="date" id="datePicker" class="date-input"
+           oninput="onDateChange()" />
+    <button class="btn-date-nav" onclick="stepDate(+1)" title="Próximo dia">
+      <i class="fa-solid fa-chevron-right"></i>
+    </button>
+  </div>
+
+  <!-- Botão "Última execução" -->
+  <button class="btn-live" id="btnLastExec" onclick="goToLastExec()" title="Ir para a data da última execução">
+    <i class="fa-solid fa-clock-rotate-left me-1"></i>Última execução
+  </button>
+
+  <!-- Botão "Hoje (ao vivo)" -->
+  <button class="btn-live" onclick="goToToday()" title="Tempo real – data de hoje">
+    <i class="fa-solid fa-circle-dot me-1" style="color:var(--green)"></i>Ao vivo
+  </button>
+
+  <!-- Banner: modo histórico -->
+  <div class="hist-banner" id="histBanner">
+    <i class="fa-solid fa-clock-rotate-left"></i>
+    <span id="histBannerText">Visualizando histórico</span>
+    <span style="color:#8b949e;font-size:.75rem">&nbsp;— locks sempre em tempo real</span>
+  </div>
+
+  <!-- Badge: modo ao vivo -->
+  <div id="liveBadge" style="display:none">
+    <span class="badge" style="background:#00e67622;border:1px solid #00e67666;
+          color:var(--green);font-size:.75rem">
+      <i class="fa-solid fa-circle me-1" style="font-size:.5rem"></i>Tempo Real
+    </span>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════ MAIN ════════════════════════ -->
+<div class="container-fluid p-3" style="max-width:1600px">
+
+  <!-- Error banner -->
+  <div id="errorBanner" class="alert alert-danger d-none mb-3"></div>
+
+  <!-- ── ROW 1: Visão Geral do Job ────────────────────────────────────────── -->
+  <div class="row g-3 mb-3">
+
+    <!-- Main semaphore card -->
+    <div class="col-12 col-md-4 col-lg-3">
+      <div class="card-dark p-4 h-100 d-flex flex-column align-items-center justify-content-center text-center gap-2">
+        <div class="section-title mb-1">Status do Job</div>
+        <div class="sem sem-lg sem-gray" id="mainSemaphore"></div>
+        <div class="fw-bold mt-1" id="jobStatusLabel" style="font-size:1.05rem">—</div>
+        <div class="text-muted-sm" id="jobCurrentStep">—</div>
+        <div id="jobElapsed" class="badge bg-secondary d-none">00:00:00</div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="col-12 col-md-8 col-lg-9">
+      <div class="card-dark p-3 h-100">
+        <div class="section-title mb-2">Detalhes da Última Execução</div>
+        <div class="row g-2" id="jobStatsGrid">
+          <div class="col text-center">
+            <div class="text-muted-sm">Início</div>
+            <div class="fw-semibold" id="statStart">—</div>
+          </div>
+          <div class="col text-center">
+            <div class="text-muted-sm">Duração</div>
+            <div class="fw-semibold" id="statDuration">—</div>
+          </div>
+          <div class="col text-center">
+            <div class="text-muted-sm">Status</div>
+            <div id="statStatus">—</div>
+          </div>
+          <div class="col text-center">
+            <div class="text-muted-sm">Habilitado</div>
+            <div id="statEnabled">—</div>
+          </div>
+          <div class="col text-center">
+            <div class="text-muted-sm">Locks ativos</div>
+            <div id="statLocks" class="fw-bold" style="font-size:1.3rem">—</div>
+          </div>
+          <div class="col text-center">
+            <div class="text-muted-sm">Jobs rodando</div>
+            <div id="statRunning" class="fw-bold" style="font-size:1.3rem">—</div>
+          </div>
+        </div>
+        <div class="mt-3 text-muted-sm" id="statMessage" style="word-break:break-word"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ROW 2: Steps ─────────────────────────────────────────────────────── -->
+  <div class="mb-1 section-title">Steps do Job (0_MAIN_FORTBRAS_MOTOR_ABASTECIMENTO)</div>
+  <div class="row g-2 mb-3" id="stepsGrid">
+    <div class="col-12 text-muted-sm">Carregando steps…</div>
+  </div>
+
+  <!-- ── ROW 3: Locks ─────────────────────────────────────────────────────── -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card-dark p-3">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="section-title">
+            <i class="fa-solid fa-lock me-1 text-danger"></i>
+            Locks e Bloqueios Ativos
+            <span class="badge bg-danger ms-2" id="lockCountBadge">0</span>
+          </div>
+        </div>
+        <div id="locksPanel">
+          <div class="text-muted-sm">Carregando…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ROW 4: Semáforos (steps especiais) ───────────────────────────────── -->
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-6">
+      <div class="card-dark p-3 h-100">
+        <div class="section-title mb-2">
+          <i class="fa-solid fa-traffic-light me-1" style="color:var(--yellow)"></i>
+          Steps de Semáforo / Trava
+        </div>
+        <div id="semaphorePanel">
+          <div class="text-muted-sm">Carregando…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Related Jobs -->
+    <div class="col-12 col-lg-6">
+      <div class="card-dark p-3 h-100">
+        <div class="section-title mb-2">
+          <i class="fa-solid fa-circle-nodes me-1" style="color:#58a6ff"></i>
+          Jobs Relacionados
+        </div>
+        <div id="relatedJobsPanel">
+          <div class="text-muted-sm">Carregando…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ROW 5: Sugestões de Monitoramento ────────────────────────────────── -->
+  <div class="card-dark p-3 mb-3">
+    <div class="section-title mb-3">
+      <i class="fa-solid fa-lightbulb me-1" style="color:var(--yellow)"></i>
+      Sugestões de Monitoramento – 0_MAIN_FORTBRAS_MOTOR_ABASTECIMENTO
+    </div>
+    <div class="row g-2">
+      <div class="col-12 col-md-6">
+        <div class="suggestion-item">
+          <strong>1. Detecção de Travamento por Semáforo</strong><br>
+          Os steps <code>SEMAFORO_WAIT</code> e <code>TRAVA PARA NAO RODAR</code> consultam
+          tabelas de controle (flags). Monitore o campo de status nessas tabelas e alerte
+          quando o wait ultrapassar a média histórica do step — sinal de que outra execução
+          não liberou o recurso.
+        </div>
+        <div class="suggestion-item">
+          <strong>2. Anomalia de Duração por Step (IQR)</strong><br>
+          O dashboard já aplica o método IQR (Interquartil Range) para cada step.
+          Steps com <span style="color:var(--yellow)">semáforo amarelo</span> indicam
+          execução fora dos limites históricos — investigue locks ou volume de dados.
+        </div>
+        <div class="suggestion-item">
+          <strong>3. Monitoramento de Databases Envolvidas</strong><br>
+          O job acessa múltiplas bases (ODS, DW, Phoenix, CRM). Inspecione os scripts
+          dos steps nos cards abaixo para mapear todas as bases e adicionar checagem
+          de disponibilidade antes de cada execução.
+        </div>
+        <div class="suggestion-item">
+          <strong>4. Taxa de Sucesso por Step</strong><br>
+          Steps com taxa de sucesso &lt; 95% (últimos 90 dias) indicam instabilidade.
+          Candidatos prioritários: <code>ENVIA_ARQUIVOS_BUQUET</code> (On Fail = "Quit failure")
+          e <code>EXTRACAO_CRM</code> (step final).
+        </div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="suggestion-item">
+          <strong>5. Bloqueio em Cadeia (Blocking Chain)</strong><br>
+          A coluna <em>blocking_session_id</em> do painel de locks identifica o bloqueador raiz.
+          Sessions com <code>wait_type = LCK_M_*</code> e <code>wait_secs &gt; 60</code>
+          provavelmente afetam os steps de ODS.
+        </div>
+        <div class="suggestion-item">
+          <strong>6. Janela de Execução Esperada</strong><br>
+          Com o histórico de 90 dias, identifique o horário normal de início e duração
+          do ciclo completo. Se o job ainda estiver rodando fora da janela esperada,
+          acione o responsável imediatamente.
+        </div>
+        <div class="suggestion-item">
+          <strong>7. Step <code>3_MOTOR_ERRO</code> – Sentinel de Falha</strong><br>
+          Este step parece ser um "circuit breaker" da camada 3. Monitore se ele está
+          sendo atingido com frequência anormal — pode indicar problema recorrente no
+          step <code>3_MOTOR_ABASTECIMENTO</code>.
+        </div>
+        <div class="suggestion-item">
+          <strong>8. Step <code>ENVIA_ARQUIVOS_BUQUET</code></strong><br>
+          Este step tem On Failure = "Quit job reporting failure". Verifique conectividade
+          com o storage/bucket externo e se os arquivos gerados pelos steps anteriores
+          estão corretos antes do envio.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ══════════════════ MODAL: SQL do Step ═══════════════════════════════════ -->
+<div class="modal fade" id="stepModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="background:#161b22;color:#e6edf3;border:1px solid #30363d">
+      <div class="modal-header" style="border-color:#30363d">
+        <h5 class="modal-title" id="stepModalTitle">—</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2 mb-3 text-muted-sm" id="stepModalMeta"></div>
+        <div class="section-title mb-1">Comando SQL</div>
+        <pre class="cmd" id="stepModalCmd"></pre>
+        <div class="section-title mb-1 mt-3">Análise Estatística</div>
+        <div id="stepModalStats"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+function fmtDt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'medium' });
+}
+function fmtSecs(s) {
+  if (!s) return '0s';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+function semDot(color, size='sm') {
+  return `<span class="sem sem-${size} sem-${color} me-1"></span>`;
+}
+function statusBadge(st) {
+  if (!st) return '<span class="badge bg-secondary">—</span>';
+  const map = { success:'success', danger:'danger', warning:'warning',
+                primary:'primary', secondary:'secondary' };
+  return `<span class="badge bg-${map[st.css]||'secondary'}">${st.label}</span>`;
+}
+function pct(val, max) {
+  if (!max) return 0;
+  return Math.min(100, Math.round(val / max * 100));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Render: Job Status
+// ═══════════════════════════════════════════════════════════════════════════
+function renderJobStatus(js) {
+  if (js.error) {
+    document.getElementById('errorBanner').textContent = '❌ ' + js.error;
+    document.getElementById('errorBanner').classList.remove('d-none');
+    return;
+  }
+  document.getElementById('errorBanner').classList.add('d-none');
+
+  // Main semaphore
+  const sem = document.getElementById('mainSemaphore');
+  sem.className = `sem sem-lg sem-${js.semaforo}`;
+
+  document.getElementById('jobStatusLabel').textContent =
+    js.no_execution  ? 'Sem execução'  :
+    js.is_running    ? `Rodando — Step ${js.current_step_id}` :
+    js.last_run_status?.label || '—';
+
+  document.getElementById('jobCurrentStep').textContent =
+    js.no_execution  ? `Nenhuma execução registrada em ${js.target_date}` :
+    js.current_step_name || (js.is_running ? 'Verificando…' : 'Ocioso');
+
+  const elBadge = document.getElementById('jobElapsed');
+  if (js.is_running && js.elapsed_hms) {
+    elBadge.textContent = '⏱ ' + js.elapsed_hms;
+    elBadge.classList.remove('d-none');
+  } else {
+    elBadge.classList.add('d-none');
+  }
+
+  document.getElementById('statStart').textContent    = fmtDt(js.last_run_datetime);
+  document.getElementById('statDuration').textContent = js.last_run_duration_hms || '—';
+  document.getElementById('statStatus').innerHTML     = statusBadge(js.last_run_status);
+  document.getElementById('statEnabled').innerHTML    =
+    js.enabled === undefined ? '<span class="badge bg-secondary">—</span>' :
+    js.enabled ? '<span class="badge bg-success">Sim</span>'
+               : '<span class="badge bg-secondary">Não</span>';
+  document.getElementById('statMessage').textContent  =
+    js.last_message ? '💬 ' + js.last_message.substring(0, 200) : '';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Render: Steps Grid
+// ═══════════════════════════════════════════════════════════════════════════
+let stepsData = [];
+
+function renderSteps(steps) {
+  stepsData = steps;
+  const grid = document.getElementById('stepsGrid');
+  if (!steps || !steps.length) {
+    grid.innerHTML = '<div class="col text-muted-sm">Sem dados de steps.</div>';
+    return;
+  }
+  if (steps[0]?.error) {
+    grid.innerHTML = `<div class="col"><div class="alert alert-danger">${steps[0].error}</div></div>`;
+    return;
+  }
+
+  grid.innerHTML = steps.map((s, idx) => {
+    const ratio = s.avg_duration_secs > 0
+      ? s.last_duration_secs / s.avg_duration_secs
+      : 0;
+    const barWidth = pct(s.last_duration_secs,
+      Math.max(s.max_duration_secs, s.last_duration_secs));
+    const barCls = ratio > 1.5 ? 'over' : ratio > 1.1 ? 'warn' : '';
+
+    const anomalyTag = s.is_anomaly
+      ? `<span class="badge anomaly-badge ms-1" title="${s.anomaly_reason}">
+           <i class="fa-solid fa-triangle-exclamation me-1"></i>Anomalia</span>`
+      : '';
+
+    return `
+    <div class="col-12 col-sm-6 col-md-4 col-lg-3 col-xl-2">
+      <div class="step-card border-${s.semaforo} p-2 h-100" onclick="openStep(${idx})">
+        <div class="d-flex align-items-center gap-1 mb-1">
+          ${semDot(s.semaforo)}
+          <span class="text-muted-sm fw-bold">#${s.step_id}</span>
+          ${anomalyTag}
+        </div>
+        <div class="fw-semibold" style="font-size:.82rem;line-height:1.2"
+             title="${escHtml(s.step_name)}">${escHtml(s.step_name)}</div>
+        <div class="mt-1">${statusBadge(s.last_status)}</div>
+
+        <div class="mt-2 text-muted-sm">Última: <strong>${s.last_duration_hms}</strong></div>
+        <div class="text-muted-sm">Média: <strong>${s.avg_duration_hms}</strong></div>
+        <div class="dur-bar-wrap mt-1">
+          <div class="dur-bar ${barCls}" style="width:${barWidth}%"></div>
+        </div>
+
+        <div class="d-flex justify-content-between mt-1 text-muted-sm">
+          <span title="Taxa de sucesso">${s.success_rate}% ok</span>
+          <span>${s.run_count} exec</span>
+        </div>
+        <span class="badge badge-db mt-1">${s.database_name}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openStep(idx) {
+  const s = stepsData[idx];
+  if (!s) return;
+  document.getElementById('stepModalTitle').textContent =
+    `Step ${s.step_id} — ${s.step_name}`;
+  document.getElementById('stepModalCmd').textContent =
+    s.command || '(sem comando)';
+  document.getElementById('stepModalMeta').innerHTML = `
+    <div class="col-auto"><span class="badge badge-db">${s.database_name}</span></div>
+    <div class="col-auto text-muted-sm">Sucesso → ${s.on_success}</div>
+    <div class="col-auto text-muted-sm">Falha → ${s.on_fail}</div>
+  `;
+  document.getElementById('stepModalStats').innerHTML = `
+    <div class="row g-2 text-muted-sm">
+      <div class="col">Min: <strong>${s.min_duration_secs ? fmtSecs(s.min_duration_secs) : '—'}</strong></div>
+      <div class="col">Média: <strong>${s.avg_duration_hms}</strong></div>
+      <div class="col">Máx: <strong>${s.max_duration_secs ? fmtSecs(s.max_duration_secs) : '—'}</strong></div>
+      <div class="col">Limite sup. IQR: <strong>${s.upper_fence_secs ? fmtSecs(s.upper_fence_secs) : '—'}</strong></div>
+      <div class="col">Taxa sucesso: <strong>${s.success_rate}%</strong></div>
+      <div class="col">Execuções (90d): <strong>${s.run_count}</strong></div>
+    </div>
+    ${s.is_anomaly ? `<div class="alert alert-danger mt-2 py-1 px-2 small">
+      <i class="fa-solid fa-triangle-exclamation me-1"></i>${escHtml(s.anomaly_reason)}</div>` : ''}
+    ${s.last_message ? `<div class="mt-2 text-muted-sm">${escHtml(s.last_message)}</div>` : ''}
+  `;
+  new bootstrap.Modal(document.getElementById('stepModal')).show();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Render: Locks
+// ═══════════════════════════════════════════════════════════════════════════
+function renderLocks(locks) {
+  const panel = document.getElementById('locksPanel');
+  const badge = document.getElementById('lockCountBadge');
+
+  if (!locks || !locks.length) {
+    badge.textContent = '0';
+    badge.className   = 'badge bg-success ms-2';
+    panel.innerHTML   = '<div class="text-muted-sm">Nenhum bloqueio ativo.</div>';
+    document.getElementById('statLocks').innerHTML =
+      '<span class="badge bg-success">0</span>';
+    return;
+  }
+  if (locks[0]?.error) {
+    panel.innerHTML = `<div class="alert alert-warning small">${locks[0].error}</div>`;
+    return;
+  }
+
+  const blocked = locks.filter(l => l.is_blocked);
+  badge.textContent = locks.length;
+  badge.className   = blocked.length ? 'badge bg-danger ms-2' : 'badge bg-warning ms-2';
+  document.getElementById('statLocks').innerHTML =
+    `<span class="badge ${blocked.length ? 'bg-danger' : 'bg-warning'}">${locks.length}</span>`;
+
+  panel.innerHTML = `
+  <div class="table-responsive">
+    <table class="table table-sm table-dark mb-0" style="font-size:.78rem">
+      <thead>
+        <tr>
+          <th>SPID</th><th>Bloqueado por</th><th>Status</th><th>Wait Type</th>
+          <th>Wait</th><th>Elapsed</th><th>DB</th><th>Login</th><th>SQL (trecho)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${locks.map(l => `
+        <tr class="${l.is_blocked ? 'table-danger' : ''}">
+          <td>${l.session_id}</td>
+          <td>${l.blocking_session_id > 0
+               ? `<span class="badge bg-danger">${l.blocking_session_id}</span>` : '—'}</td>
+          <td>${escHtml(l.status)}</td>
+          <td><code>${escHtml(l.wait_type)}</code></td>
+          <td>${fmtSecs(l.wait_secs)}</td>
+          <td>${fmtSecs(l.elapsed_secs)}</td>
+          <td>${escHtml(l.db_name)}</td>
+          <td>${escHtml(l.login_name)}</td>
+          <td style="max-width:220px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"
+              title="${escHtml(l.sql_text)}">${escHtml(l.sql_text)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Render: Semaphore Steps
+// ═══════════════════════════════════════════════════════════════════════════
+function renderSemaphoreSteps(sem) {
+  const panel = document.getElementById('semaphorePanel');
+  if (!sem || !sem.length) {
+    panel.innerHTML = '<div class="text-muted-sm">Nenhum step de semáforo/trava identificado.</div>';
+    return;
+  }
+  if (sem[0]?.error) {
+    panel.innerHTML = `<div class="alert alert-warning small">${sem[0].error}</div>`;
+    return;
+  }
+  panel.innerHTML = sem.map(s => `
+    <div class="mb-2">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="badge bg-warning text-dark">#${s.step_id}</span>
+        <strong style="font-size:.85rem">${escHtml(s.step_name)}</strong>
+        <span class="badge badge-db">${escHtml(s.database_name)}</span>
+      </div>
+      <a class="collapse-link" data-bs-toggle="collapse"
+         href="#semCmd${s.step_id}">Ver SQL ▾</a>
+      <div class="collapse" id="semCmd${s.step_id}">
+        <pre class="cmd mt-1">${escHtml(s.command)}</pre>
+      </div>
+    </div>
+  `).join('<hr style="border-color:#30363d">');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Render: Related Jobs
+// ═══════════════════════════════════════════════════════════════════════════
+function renderRelatedJobs(jobs) {
+  const panel = document.getElementById('relatedJobsPanel');
+  const runningEl = document.getElementById('statRunning');
+
+  if (!jobs || !jobs.length) {
+    panel.innerHTML = '<div class="text-muted-sm">Nenhum job relacionado encontrado.</div>';
+    return;
+  }
+  if (jobs[0]?.error) {
+    panel.innerHTML = `<div class="alert alert-warning small">${jobs[0].error}</div>`;
+    return;
+  }
+
+  const running = jobs.filter(j => j.is_running).length;
+  runningEl.innerHTML = `<span class="badge ${running ? 'bg-primary' : 'bg-secondary'}">${running}</span>`;
+
+  panel.innerHTML = `
+  <div style="max-height:320px;overflow-y:auto">
+    ${jobs.map(j => `
+    <div class="d-flex align-items-center gap-2 py-1" style="border-bottom:1px solid #21262d">
+      ${semDot(j.semaforo, 'md')}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.8rem;font-weight:600;overflow:hidden;white-space:nowrap;
+                    text-overflow:ellipsis" title="${escHtml(j.name)}">${escHtml(j.name)}</div>
+        <div class="text-muted-sm">${fmtDt(j.last_run_datetime)} · ${escHtml(j.last_duration_hms)}</div>
+      </div>
+      ${statusBadge(j.last_status)}
+    </div>`).join('')}
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Escape HTML
+// ═══════════════════════════════════════════════════════════════════════════
+function escHtml(str) {
+  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Date utilities
+// ═══════════════════════════════════════════════════════════════════════════
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function fmtDateBR(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function pickerDate() {
+  return document.getElementById('datePicker').value || todayISO();
+}
+
+function isToday(iso) {
+  return iso === todayISO();
+}
+
+// ── Navegação de datas ─────────────────────────────────────────────────────
+function stepDate(delta) {
+  const cur = new Date(pickerDate() + 'T00:00:00');
+  cur.setDate(cur.getDate() + delta);
+  const next = cur.toISOString().slice(0, 10);
+  // Não avança além de hoje
+  if (next > todayISO()) return;
+  document.getElementById('datePicker').value = next;
+  doRefresh();
+}
+
+function onDateChange() {
+  const picked = pickerDate();
+  if (picked > todayISO()) {
+    document.getElementById('datePicker').value = todayISO();
+  }
+  doRefresh();
+}
+
+let _lastExecDate = null;
+
+async function goToLastExec() {
+  if (_lastExecDate) {
+    document.getElementById('datePicker').value = _lastExecDate;
+    doRefresh();
+    return;
+  }
+  try {
+    const r = await fetch('/api/last-execution-date');
+    const d = await r.json();
+    _lastExecDate = d.date;
+    document.getElementById('datePicker').value = _lastExecDate;
+    doRefresh();
+  } catch (e) { /* silencioso */ }
+}
+
+function goToToday() {
+  document.getElementById('datePicker').value = todayISO();
+  doRefresh();
+}
+
+// ── Atualiza indicadores de modo (ao vivo / histórico) ─────────────────────
+function updateModeBadges(selectedDate) {
+  const banner    = document.getElementById('histBanner');
+  const liveBadge = document.getElementById('liveBadge');
+  const bannerTxt = document.getElementById('histBannerText');
+
+  if (isToday(selectedDate)) {
+    banner.classList.remove('show');
+    liveBadge.style.display = 'inline-flex';
+  } else {
+    banner.classList.add('show');
+    liveBadge.style.display = 'none';
+    bannerTxt.textContent = `Visualizando histórico de ${fmtDateBR(selectedDate)}`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auto-refresh (ativo apenas quando job está rodando)
+// ═══════════════════════════════════════════════════════════════════════════
+let _autoTimer = null;
+
+function setAutoRefresh(running) {
+  if (running && !_autoTimer) {
+    _autoTimer = setInterval(doRefresh, 30000);
+  } else if (!running && _autoTimer) {
+    clearInterval(_autoTimer);
+    _autoTimer = null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Main Refresh
+// ═══════════════════════════════════════════════════════════════════════════
+let isRefreshing = false;
+
+async function doRefresh() {
+  if (isRefreshing) return;
+  isRefreshing = true;
+
+  const btn  = document.getElementById('refreshBtn');
+  const icon = document.getElementById('refreshIcon');
+  btn.disabled = true;
+  icon.className = 'fa-solid fa-rotate-right me-2 fa-spin';
+
+  const selectedDate = pickerDate();
+  updateModeBadges(selectedDate);
+
+  try {
+    const url  = `/api/data?date=${selectedDate}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    renderJobStatus(data.job_status);
+    renderSteps(data.steps);
+    renderLocks(data.locks);
+    renderSemaphoreSteps(data.semaphore_steps);
+    renderRelatedJobs(data.related_jobs);
+
+    document.getElementById('lastRefresh').textContent =
+      new Date(data.refreshed_at).toLocaleTimeString('pt-BR');
+
+    document.getElementById('errorBanner').classList.add('d-none');
+
+    // auto-refresh só em modo ao vivo e com job rodando
+    const isLive    = isToday(selectedDate);
+    const isRunning = data.job_status?.is_running || false;
+    setAutoRefresh(isLive && isRunning);
+
+  } catch (err) {
+    document.getElementById('errorBanner').textContent =
+      '❌ Falha ao buscar dados: ' + err.message;
+    document.getElementById('errorBanner').classList.remove('d-none');
+    setAutoRefresh(false);
+  } finally {
+    btn.disabled = false;
+    icon.className = 'fa-solid fa-rotate-right me-2';
+    isRefreshing = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Inicialização: busca última data de execução → seta picker → carrega dados
+// ═══════════════════════════════════════════════════════════════════════════
+async function init() {
+  // Define picker com hoje enquanto busca a última execução
+  document.getElementById('datePicker').value = todayISO();
+  document.getElementById('datePicker').max   = todayISO();
+
+  try {
+    const r = await fetch('/api/last-execution-date');
+    const d = await r.json();
+    if (d.date) {
+      _lastExecDate = d.date;
+      document.getElementById('datePicker').value = d.date;
+    }
+  } catch (e) { /* usa hoje */ }
+
+  doRefresh();
+}
+
+init();
+</script>
+</body>
+</html>
